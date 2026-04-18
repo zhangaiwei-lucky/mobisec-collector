@@ -1,0 +1,96 @@
+package com.ucas.infocollect.adapter;
+
+import android.graphics.Color;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+
+import com.ucas.infocollect.R;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 通用键值对信息列表适配器
+ * 支持分组标题（key 以 "##" 开头的条目显示为标题）
+ */
+public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+
+    private static final int TYPE_HEADER = 0;
+    private static final int TYPE_ITEM   = 1;
+
+    private final List<Map.Entry<String, String>> items = new java.util.ArrayList<>();
+
+    public InfoAdapter(List<Map.Entry<String, String>> initialItems) {
+        if (initialItems != null) this.items.addAll(initialItems);
+    }
+
+    public void updateData(List<Map.Entry<String, String>> newItems) {
+        items.clear();
+        items.addAll(newItems);
+        notifyDataSetChanged();
+    }
+
+    @Override
+    public int getItemViewType(int position) {
+        return items.get(position).getKey().startsWith("##") ? TYPE_HEADER : TYPE_ITEM;
+    }
+
+    @NonNull
+    @Override
+    public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+        LayoutInflater inflater = LayoutInflater.from(parent.getContext());
+        if (viewType == TYPE_HEADER) {
+            View v = inflater.inflate(R.layout.item_header, parent, false);
+            return new HeaderHolder(v);
+        } else {
+            View v = inflater.inflate(R.layout.item_info, parent, false);
+            return new ItemHolder(v);
+        }
+    }
+
+    @Override
+    public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
+        Map.Entry<String, String> entry = items.get(position);
+        if (holder instanceof HeaderHolder) {
+            ((HeaderHolder) holder).title.setText(entry.getKey().substring(2));
+        } else {
+            ItemHolder h = (ItemHolder) holder;
+            h.key.setText(entry.getKey());
+            h.value.setText(entry.getValue());
+            // 高敏感度信息用红色标注
+            if (entry.getValue().startsWith("[HIGH]")) {
+                h.value.setTextColor(Color.parseColor("#D32F2F"));
+                h.value.setText(entry.getValue().substring(6));
+            } else {
+                h.value.setTextColor(Color.parseColor("#333333"));
+            }
+        }
+    }
+
+    @Override
+    public int getItemCount() {
+        return items.size();
+    }
+
+    static class HeaderHolder extends RecyclerView.ViewHolder {
+        TextView title;
+        HeaderHolder(View v) {
+            super(v);
+            title = v.findViewById(R.id.header_title);
+        }
+    }
+
+    static class ItemHolder extends RecyclerView.ViewHolder {
+        TextView key, value;
+        ItemHolder(View v) {
+            super(v);
+            key   = v.findViewById(R.id.info_key);
+            value = v.findViewById(R.id.info_value);
+        }
+    }
+}

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/java/com/ucas/infocollect/collector\")",
+      "Bash(mkdir -p \"E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/java/com/ucas/infocollect/fragment\")",
+      "Bash(mkdir -p \"E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/res/layout\")",
+      "Bash(mkdir -p \"E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/res/values\")",
+      "Bash(cmd.exe /c \"java -version\")",
+      "Bash(pdftotext \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第一次课.pdf\" -)",
+      "Bash(pdftotext \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第二次课.pdf\" -)",
+      "Bash(pdftotext \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第三次课.pdf\" -)",
+      "Bash(pdftotext \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第四次课简.pdf\" -)",
+      "Bash(pdftotext \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第五次课.pdf\" -)",
+      "Read(//tmp/**)",
+      "Bash(pdftotext -layout \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第一次课.pdf\" /tmp/lecture1_layout.txt)",
+      "Bash(pdftotext -layout \"E:/Files/UCAS/春季学期/移动智能安全/移动智能系统安全-第二次课.pdf\" /tmp/lecture2_layout.txt)",
+      "Bash(cp -r \"E:/Files/UCAS/春季学期/移动智能安全/Src\" \"E:/Files/UCAS/Src\")",
+      "Bash(cp \"E:/Files/UCAS/春季学期/移动智能安全/Report.tex\" \"E:/Files/UCAS/Report.tex\")",
+      "Bash(sed -i -e 's/（第4课\\\\/第5课）//g' -e 's/（第四次课\\\\/第五次课）//g' -e 's/（第4课：[^）]*）//g' -e 's/（第5课[^）]*）//g' -e 's/（第四次课[^）]*）//g' -e 's/（第五次课[^）]*）//g' -e s/（第4课）//g -e s/（第5课）//g E:/Files/UCAS/Src/app/src/main/java/com/ucas/infocollect/collector/SecurityCollector.java)",
+      "Bash(cp E:/Files/UCAS/Src/app/src/main/java/com/ucas/infocollect/collector/SecurityCollector.java E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/java/com/ucas/infocollect/collector/SecurityCollector.java)",
+      "Bash(cp E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/java/com/ucas/infocollect/collector/UserDataCollector.java E:/Files/UCAS/Src/app/src/main/java/com/ucas/infocollect/collector/UserDataCollector.java)",
+      "Bash(sed -i -e s/（结合课程内容）//g -e s/结合课件//g -e s/第五次课//g -e s/第四次课//g -e 's/第 *[一二三四五] *次课//g' -e s/p132//g -e s/p71-75//g -e s/p71//g -e s/p96//g E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/java/com/ucas/infocollect/collector/SecurityCollector.java)",
+      "Bash(cp E:/Files/UCAS/春季学期/移动智能安全/Src/app/src/main/java/com/ucas/infocollect/collector/SecurityCollector.java E:/Files/UCAS/Src/app/src/main/java/com/ucas/infocollect/collector/SecurityCollector.java)"
+    ]
+  }
+}

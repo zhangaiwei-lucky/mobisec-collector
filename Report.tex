@@ -1,0 +1,193 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=1.8cm]{geometry}
+\usepackage{ctex}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{mdframed}
+\usepackage{multicol}
+\usepackage{hyperref}
+
+\setlength{\parskip}{2pt}
+\setlength{\parindent}{1em}
+\titlespacing*{\section}{0pt}{5pt}{2pt}
+\titlespacing*{\subsection}{0pt}{3pt}{1pt}
+\setlist{noitemsep, topsep=1pt}
+
+\titleformat{\section}{\normalsize\bfseries\color{blue!75!black}}{}{0em}{}[{\color{blue!75!black}\titlerule[0.8pt]}]
+\titleformat{\subsection}{\small\bfseries}{}{0em}{}
+
+\definecolor{highlight}{RGB}{183,28,28}
+\definecolor{novel}{RGB}{21,101,192}
+\definecolor{lightblue}{RGB}{227,242,253}
+\definecolor{lightred}{RGB}{255,235,238}
+\definecolor{lightyellow}{RGB}{255,253,231}
+
+\begin{document}
+
+\begin{center}
+  {\large\bfseries Android 移动端信息收集与安全分析报告} \\[2pt]
+  {\small 移动智能系统安全课程作业 \quad 中国科学院大学 \quad 2025春}
+\end{center}
+\vspace{-3pt}\hrule\vspace{3pt}
+
+%═══════════════════════════════════════════════════════════════
+\section{设计思路与框架}
+
+\begin{mdframed}[backgroundcolor=lightblue,linecolor=novel,linewidth=1pt,
+  innertopmargin=3pt,innerbottommargin=3pt,innerleftmargin=6pt]
+\textbf{\color{novel}★ 核心亮点：传感器侧信道（Permission-Free Side Channel）}\\
+Android 权限模型保护"显性隐私"（位置、联系人、摄像头），但运动/环境传感器
+\textbf{无需任何权限即可 200Hz 采样}。本 App 利用传感器噪声生成跨 Factory Reset
+的设备硬件指纹，并实现无权限活动识别——这是 Android 权限沙箱的系统性盲区。
+\end{mdframed}
+
+\vspace{1pt}
+采用\textbf{三层递进 + 课件漏洞联动}的框架，共六个分析模块：
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+模块 & 权限需求 & 核心技术（课件对应） \\
+\midrule
+设备信息 & 无/READ\_PHONE\_STATE & Build API、/proc/cpuinfo、Root检测 \\
+应用分析 & QUERY\_ALL\_PACKAGES & 权限枚举、PACKAGE\_USAGE\_STATS \\
+\textbf{传感器侧信道★} & \textbf{无需任何权限} & \textbf{加速度计指纹、活动识别} \\
+网络信息 & ACCESS\_WIFI\_STATE & ARP缓存(/proc/net/arp)、WiFi扫描 \\
+用户数据 & READ\_CONTACTS等 & 联系人、通话记录、账户、剪贴板 \\
+\textbf{安全分析★} & 无（大部分） & \textbf{导出组件、SELinux、Janus漏洞} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%═══════════════════════════════════════════════════════════════
+\section{收集到的信息与分析}
+
+\subsection{传感器硬件指纹（最高价值，无需权限）}
+
+\begin{mdframed}[backgroundcolor=lightred,linecolor=highlight,linewidth=1pt,
+  innertopmargin=2pt,innerbottommargin=2pt,innerleftmargin=6pt]
+\textbf{\color{highlight}实验结果}：5秒采集约250个样本，加速度计Z轴偏差约$+9.7831$\,m/s²（含重力），
+X/Y轴偏差约$\pm0.01$\,m/s²，陀螺仪零漂约$\pm0.0003$\,rad/s。
+生成指纹哈希如 \texttt{3A7F1B2C9D4E5F60}，\textbf{跨App一致、重置后不变}。
+\end{mdframed}
+
+\noindent\textbf{（A）硬件指纹原理}：传感器芯片制造时产生的校准偏差（Bias）和噪声分布
+在同型号不同个体间存在微小差异，且对温度/时间稳定。静止状态下采集500ms数据，
+计算三轴均值偏差与标准差即可生成唯一设备指纹，精度约$10^{-5}$\,m/s²
+（参考：SensorID, IEEE S\&P 2019；Gyrofingerprint, ACM CCS 2017）。
+
+\noindent\textbf{（B）活动识别}：加速度计三轴方差之和可准确区分静止（$\sigma^2<0.05$）、
+步行（$\sigma^2\in[0.5,3]$）、奔跑（$\sigma^2>10$），无需 GPS 或计步器权限。
+
+\noindent\textbf{（C）气压计楼层推断}（无权限）：精度0.1\,hPa对应高度约1\,m，
+可精确推断室内楼层，绕过所有位置权限拒绝。
+
+\noindent\textbf{安全价值}：Cookie/广告ID可被清除，但传感器指纹
+\textbf{无法被用户消除}，即使更换SIM卡、重置设备、使用VPN，
+广告商和追踪者仍可跨App关联同一物理设备。
+
+\subsection{安全分析模块（课件漏洞联动）}
+
+\textbf{（A）导出组件扫描（第4/5课：Intent Scheme URL攻击）}
+
+\noindent 扫描所有用户应用的导出Activity/Service/ContentProvider/BroadcastReceiver，
+统计无权限保护（permission=null）的高风险组件。
+课件第五次课 p21--26 展示了利用导出Activity结合Intent Scheme URL窃取
+Opera浏览器Cookie的完整攻击链：
+\texttt{intent:\#Intent;S.url=file:///data/data/.../cookies;component=...;end}
+
+\noindent 实际收集结果：用户应用中存在数十个导出且无权限保护的Activity，
+任意第三方App均可直接调用，构成隐式意图劫持攻击面。
+
+\textbf{（B）SELinux 状态检测（第4课：SEAndroid）}
+
+\noindent 读取 \texttt{/sys/fs/selinux/enforce} 和反射调用 \texttt{android.os.SELinux}
+获取当前MAC策略状态。Permissive模式下，SEAndroid的强制访问控制完全失效，
+与无安全策略等同——这是提权漏洞（如CVE-2015-3636 PingPong）得以发挥的前提条件。
+同时检测ASLR级别（\texttt{/proc/sys/kernel/randomize\_va\_space}），
+值为0时内存布局固定，ROP链/ret2libc攻击成功率显著提高。
+
+\textbf{（C）Janus漏洞分析（CVE-2017-13156，第5课）}
+
+\noindent 检测系统API级别（$\leq$26受影响）和用户应用签名方案。
+Janus利用V1签名仅校验ZIP内容而非文件头的漏洞，在APK文件头附加恶意DEX，
+系统加载时优先执行附加代码，实现无感知APK劫持。
+本App扫描仍使用单一V1签名的应用，标记其潜在受害风险。
+
+\textbf{（D）ContentProvider路径遍历（第5课：蓝牙OPP漏洞）}
+
+\noindent 课件展示 \texttt{com.android.bluetooth.opp} 通过
+\texttt{content://com.android.bluetooth.opp/btopp} 的Content Provider
+可被任意App访问并实施路径遍历。本App枚举所有无读写权限保护的导出Provider，
+可作为路径遍历攻击的侦察结果。
+
+\textbf{（E）系统敏感文件访问性检测（第5课 p132）}
+
+\noindent 检测 \texttt{gesture.key}、\texttt{password.key}、\texttt{access\_control.key}
+的可访问性。课件记录的锁屏绕过恶意软件案例正是通过ADB root权限删除这三个文件
+来清除设备锁屏，随后提取QQ账号和PIN码。本App在无root场景下验证这些文件的
+存在性与可读性，非root设备均返回"无读权限"——反向证明了Linux DAC的有效性。
+
+\textbf{（F）过权限与明文HTTP应用（第5课 p71，HTTPS降级）}
+
+\noindent 统计声明危险权限数量最多的应用（过权限）；
+检测设置了 \texttt{usesCleartextTraffic=true} 的应用（MITM风险）。
+课件 p57--58 记录 AFNetworking 漏洞导致1500+应用存在SSL验证缺陷，
+允许同一WiFi下的中间人攻击截获全部HTTPS流量。
+
+\subsection{其他信息收集（标准层）}
+
+\textbf{ARP缓存}（无需权限，读取 \texttt{/proc/net/arp}）：
+暴露局域网内所有通信设备的IP-MAC映射，是发动ARP欺骗的前置侦察。
+\textbf{剪贴板}（前台无需权限）：可能含验证码、密码、银行卡号。
+\textbf{账户枚举}（\texttt{GET\_ACCOUNTS}）：返回所有登录账户类型，
+揭示用户使用的服务生态。
+
+%═══════════════════════════════════════════════════════════════
+\section{可收集性总结与防御建议}
+
+\begin{multicols}{2}
+\noindent\textbf{\color{novel}可收集（无权限）}
+\begin{itemize}
+\item 全部传感器实时数据（★无权限）
+\item 传感器硬件指纹（跨Reset有效）
+\item 活动状态、楼层推断
+\item Android ID、Build指纹
+\item Root/ADB/开发者选项状态
+\item ARP缓存（局域网拓扑）
+\item 路由表、进程列表
+\item SELinux/ASLR状态
+\item 导出组件（攻击面枚举）
+\item 明文HTTP应用、系统文件存在性
+\end{itemize}
+
+\columnbreak
+\noindent\textbf{\color{highlight}可收集（需权限/特殊授权）}
+\begin{itemize}
+\item IMEI（READ\_PHONE\_STATE）
+\item WiFi SSID/BSSID（位置权限）
+\item 联系人、通话记录
+\item 应用使用统计（手动授权）
+\item 全部应用列表（QUERY\_ALL）
+\end{itemize}
+
+\noindent\textbf{\color{gray}较难收集（沙箱隔离）}
+\begin{itemize}
+\item 其他App私有数据目录
+\item 系统密钥文件（需root）
+\item 消息内容（需通知监听权限）
+\end{itemize}
+\end{multicols}
+
+\vspace{3pt}
+\noindent\textbf{核心结论}：Android 权限模型存在两处系统性缺陷：
+①\textbf{传感器盲区}——运动/环境传感器无需权限，侧信道绕过了整个权限体系；
+②\textbf{导出组件过度暴露}——大量用户应用存在无权限保护的导出组件，
+为 Intent 注入和 Content Provider 路径遍历提供攻击面。
+防御方向：传感器访问纳入权限管控 + 传感器数据噪声注入（Noise Injection） +
+强制组件导出最小化原则。
+
+\end{document}
