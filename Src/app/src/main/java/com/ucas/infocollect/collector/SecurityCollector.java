@@ -66,35 +66,35 @@ public class SecurityCollector {
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // ── 1. SELinux 状态（：SEAndroid）────────────────
-        addHeader(items, "SELinux / SEAndroid 安全状态");
+        CollectorUtils.addHeader(items, "SELinux / SEAndroid 安全状态");
         collectSeLinux(items);
 
         // ── 2. 系统敏感文件（ ：锁屏绕过案例）────────
-        addHeader(items, "系统敏感文件可访问性");
+        CollectorUtils.addHeader(items, "系统敏感文件可访问性");
         checkSensitiveFiles(items);
 
         // ── 3. 导出组件扫描（：Intent攻击 / CP路径遍历）──
-        addHeader(items, "导出组件扫描（Intent/IPC 攻击面）");
+        CollectorUtils.addHeader(items, "导出组件扫描（Intent/IPC 攻击面）");
         scanExportedComponents(items);
 
         // ── 4. ContentProvider 路径遍历风险────────────
-        addHeader(items, "Content Provider 路径遍历风险");
+        CollectorUtils.addHeader(items, "Content Provider 路径遍历风险");
         scanDangerousProviders(items);
 
         // ── 5. APK 签名方案分析（Janus CVE-2017-13156）────────────
-        addHeader(items, "APK 签名方案 / Janus 漏洞");
+        CollectorUtils.addHeader(items, "APK 签名方案 / Janus 漏洞");
         analyzeSignatureSchemes(items);
 
         // ── 6. 过权限应用统计──────────────────
-        addHeader(items, "过权限应用 Top 10");
+        CollectorUtils.addHeader(items, "过权限应用 Top 10");
         scanOverPrivilegedApps(items);
 
         // ── 7. 允许明文 HTTP 的应用（HTTPS降级风险）──────────────
-        addHeader(items, "允许明文 HTTP 的应用（MITM 攻击面）");
+        CollectorUtils.addHeader(items, "允许明文 HTTP 的应用（MITM 攻击面）");
         scanCleartextApps(items);
 
         // ── 8. 运行中服务 / 可疑后台进程（挖矿木马特征）──────────
-        addHeader(items, "运行中进程与可疑服务");
+        CollectorUtils.addHeader(items, "运行中进程与可疑服务");
         checkRunningProcesses(items);
 
         return items;
@@ -108,7 +108,7 @@ public class SecurityCollector {
         String enforceFile = readFile("/sys/fs/selinux/enforce");
         if (!enforceFile.isEmpty()) {
             boolean enforcing = enforceFile.trim().equals("1");
-            add(items, "SELinux 模式",
+            CollectorUtils.add(items, "SELinux 模式",
                 enforcing ? "Enforcing（强制）✓ MAC 策略生效"
                           : "[HIGH]Permissive（宽松）— MAC 策略不生效，提权风险高");
         }
@@ -117,7 +117,7 @@ public class SecurityCollector {
         String paranoid = readFile("/proc/sys/kernel/perf_event_paranoid");
         if (!paranoid.isEmpty()) {
             int val = parseIntSafe(paranoid.trim());
-            add(items, "perf_event 偏执级别",
+            CollectorUtils.add(items, "perf_event 偏执级别",
                 val + (val >= 2 ? "（安全）" : "[HIGH]（< 2，侧信道泄露风险）"));
         }
 
@@ -128,18 +128,18 @@ public class SecurityCollector {
             Method isSELinuxEnforced = seLinux.getMethod("isSELinuxEnforced");
             boolean enabled  = (Boolean) isSELinuxEnabled.invoke(null);
             boolean enforced = (Boolean) isSELinuxEnforced.invoke(null);
-            add(items, "SELinux 已启用", String.valueOf(enabled));
-            add(items, "SELinux 已强制",
+            CollectorUtils.add(items, "SELinux 已启用", String.valueOf(enabled));
+            CollectorUtils.add(items, "SELinux 已强制",
                 enforced ? "是" : "[HIGH]否（Permissive 模式，等同无 MAC）");
         } catch (Exception e) {
-            add(items, "SELinux 反射读取", "不支持: " + e.getMessage());
+            CollectorUtils.add(items, "SELinux 反射读取", "不支持: " + e.getMessage());
         }
 
         // ASLR 状态（：内存保护）
         String aslr = readFile("/proc/sys/kernel/randomize_va_space");
         if (!aslr.isEmpty()) {
             int val = parseIntSafe(aslr.trim());
-            add(items, "ASLR 级别",
+            CollectorUtils.add(items, "ASLR 级别",
                 val + (val == 2 ? "（完全随机化 ✓）"
                      : val == 1 ? "（部分随机化）"
                      : "[HIGH]（已禁用，ROP/ret2libc 攻击更易实施）"));
@@ -178,12 +178,12 @@ public class SecurityCollector {
             } else {
                 status = "存在但无读权限（需 root）";
             }
-            add(items, f[1] + "\n" + f[0], status);
+            CollectorUtils.add(items, f[1] + "\n" + f[0], status);
         }
 
         // /proc/cpuinfo 和 /proc/meminfo（无需权限，课件提到的系统信息）
         String cpuModel = readFirstMatchingLine("/proc/cpuinfo", "Hardware");
-        add(items, "/proc/cpuinfo 硬件型号", cpuModel.isEmpty() ? "无" : cpuModel);
+        CollectorUtils.add(items, "/proc/cpuinfo 硬件型号", cpuModel.isEmpty() ? "无" : cpuModel);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ public class SecurityCollector {
                 PackageManager.GET_RECEIVERS |
                 PackageManager.GET_PROVIDERS);
         } catch (Exception e) {
-            add(items, "扫描失败", e.getMessage());
+            CollectorUtils.add(items, "扫描失败", e.getMessage());
             return;
         }
 
@@ -241,17 +241,17 @@ public class SecurityCollector {
             }
         }
 
-        add(items, "用户App导出Activity数",  String.valueOf(exportedActivity));
-        add(items, "用户App导出Service数",   String.valueOf(exportedService));
-        add(items, "用户App导出Receiver数",  String.valueOf(exportedReceiver));
-        add(items, "无权限保护的导出组件",
+        CollectorUtils.add(items, "用户App导出Activity数",  String.valueOf(exportedActivity));
+        CollectorUtils.add(items, "用户App导出Service数",   String.valueOf(exportedService));
+        CollectorUtils.add(items, "用户App导出Receiver数",  String.valueOf(exportedReceiver));
+        CollectorUtils.add(items, "无权限保护的导出组件",
             highRisk.isEmpty() ? "无" : "[HIGH]" + highRisk.size() + " 个");
 
         // 展示前 5 个高风险无权限导出组件
         int shown = 0;
         for (String comp : highRisk) {
             if (shown++ >= 5) break;
-            add(items, "高风险组件", "[HIGH]" + comp);
+            CollectorUtils.add(items, "高风险组件", "[HIGH]" + comp);
         }
     }
 
@@ -263,7 +263,7 @@ public class SecurityCollector {
         try {
             packages = pm.getInstalledPackages(PackageManager.GET_PROVIDERS);
         } catch (Exception e) {
-            add(items, "扫描失败", e.getMessage());
+            CollectorUtils.add(items, "扫描失败", e.getMessage());
             return;
         }
 
@@ -287,16 +287,16 @@ public class SecurityCollector {
             }
         }
 
-        add(items, "导出 ContentProvider 总数", String.valueOf(total));
-        add(items, "无权限保护的用户 ContentProvider",
+        CollectorUtils.add(items, "导出 ContentProvider 总数", String.valueOf(total));
+        CollectorUtils.add(items, "无权限保护的用户 ContentProvider",
             riskyProviders.isEmpty() ? "无" : "[HIGH]" + riskyProviders.size() + " 个");
-        add(items, "路径遍历攻击说明",
+        CollectorUtils.add(items, "路径遍历攻击说明",
             "通过 content://authority/../../../data/data/target/file 可能读取其他 App 文件");
 
         int shown = 0;
         for (String p : riskyProviders) {
             if (shown++ >= 5) break;
-            add(items, "高风险 Provider", "[HIGH]" + p);
+            CollectorUtils.add(items, "高风险 Provider", "[HIGH]" + p);
         }
     }
 
@@ -304,11 +304,11 @@ public class SecurityCollector {
     // 5. APK 签名方案分析（Janus CVE-2017-13156，）
     // ─────────────────────────────────────────────────────────────
     private void analyzeSignatureSchemes(List<Map.Entry<String, String>> items) {
-        add(items, "Janus 漏洞说明",
+        CollectorUtils.add(items, "Janus 漏洞说明",
             "CVE-2017-13156：仅用 V1 签名的 APK 在 Android 5.1-8.0 上\n" +
             "可在文件头附加 DEX 字节码而不破坏签名，实现无感更新劫持");
-        add(items, "当前系统 API",    String.valueOf(Build.VERSION.SDK_INT));
-        add(items, "Janus 影响范围", Build.VERSION.SDK_INT <= 26
+        CollectorUtils.add(items, "当前系统 API",    String.valueOf(Build.VERSION.SDK_INT));
+        CollectorUtils.add(items, "Janus 影响范围", Build.VERSION.SDK_INT <= 26
             ? "[HIGH]当前系统在受影响范围内（API ≤ 26）"
             : "当前系统不受 Janus 影响（API > 26，强制 V2+ 签名验证）");
 
@@ -320,7 +320,7 @@ public class SecurityCollector {
             try {
                 packages = pm.getInstalledPackages(PackageManager.GET_SIGNATURES);
             } catch (Exception e2) {
-                add(items, "签名读取失败", e2.getMessage());
+                CollectorUtils.add(items, "签名读取失败", e2.getMessage());
                 return;
             }
         }
@@ -340,9 +340,9 @@ public class SecurityCollector {
                 }
             }
         }
-        add(items, "扫描用户应用总数", String.valueOf(total));
+        CollectorUtils.add(items, "扫描用户应用总数", String.valueOf(total));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            add(items, "疑似 V1-only 签名应用",
+            CollectorUtils.add(items, "疑似 V1-only 签名应用",
                 v1Only > 0 ? "[HIGH]" + v1Only + " 个（若系统 ≤ API26 则受 Janus 影响）"
                            : String.valueOf(v1Only));
         }
@@ -352,7 +352,7 @@ public class SecurityCollector {
     // 6. 过权限应用统计
     // ─────────────────────────────────────────────────────────────
     private void scanOverPrivilegedApps(List<Map.Entry<String, String>> items) {
-        add(items, "背景",
+        CollectorUtils.add(items, "背景",
             "研究表明 56% 的应用存在过度权限声明；\n" +
             "60% 的应用拥有 INTERNET 权限（数据外传通道）");
 
@@ -360,7 +360,7 @@ public class SecurityCollector {
         try {
             packages = pm.getInstalledPackages(PackageManager.GET_PERMISSIONS);
         } catch (Exception e) {
-            add(items, "扫描失败", e.getMessage());
+            CollectorUtils.add(items, "扫描失败", e.getMessage());
             return;
         }
 
@@ -379,11 +379,11 @@ public class SecurityCollector {
         }
         permCounts.sort((a, b) -> b.getValue() - a.getValue());
 
-        add(items, "声明危险权限的用户应用数", String.valueOf(permCounts.size()));
+        CollectorUtils.add(items, "声明危险权限的用户应用数", String.valueOf(permCounts.size()));
         int top = Math.min(permCounts.size(), 10);
         for (int i = 0; i < top; i++) {
             Map.Entry<String, Integer> e = permCounts.get(i);
-            add(items, "#" + (i + 1) + " " + e.getKey(),
+            CollectorUtils.add(items, "#" + (i + 1) + " " + e.getKey(),
                 "[HIGH]声明了 " + e.getValue() + " 项危险权限");
         }
     }
@@ -392,7 +392,7 @@ public class SecurityCollector {
     // 7. 明文 HTTP 应用（HTTPS 降级风险，）
     // ─────────────────────────────────────────────────────────────
     private void scanCleartextApps(List<Map.Entry<String, String>> items) {
-        add(items, "背景",
+        CollectorUtils.add(items, "背景",
             "AFNetworking 漏洞案例：1500+ 应用因错误配置 SSL 验证，\n" +
             "在同一 WiFi 下可被 MITM 攻击并截获所有 HTTPS 流量");
 
@@ -400,7 +400,7 @@ public class SecurityCollector {
         try {
             packages = pm.getInstalledPackages(0);
         } catch (Exception e) {
-            add(items, "扫描失败", e.getMessage());
+            CollectorUtils.add(items, "扫描失败", e.getMessage());
             return;
         }
 
@@ -414,13 +414,13 @@ public class SecurityCollector {
             }
         }
 
-        add(items, "允许明文 HTTP 的用户应用",
+        CollectorUtils.add(items, "允许明文 HTTP 的用户应用",
             cleartextApps.isEmpty() ? "无（全部强制 HTTPS）"
                 : "[HIGH]" + cleartextApps.size() + " 个（存在 MITM 风险）");
         int shown = 0;
         for (String app : cleartextApps) {
             if (shown++ >= 10) break;
-            add(items, "明文 HTTP 应用", "[HIGH]" + app);
+            CollectorUtils.add(items, "明文 HTTP 应用", "[HIGH]" + app);
         }
     }
 
@@ -428,7 +428,7 @@ public class SecurityCollector {
     // 8. 运行中进程（挖矿木马 / 可疑服务检测，）
     // ─────────────────────────────────────────────────────────────
     private void checkRunningProcesses(List<Map.Entry<String, String>> items) {
-        add(items, "挖矿木马特征",
+        CollectorUtils.add(items, "挖矿木马特征",
             "CpuMiner 服务以 AndroidManifest 中注册的后台服务形式运行，\n" +
             "持续占用 CPU。可通过进程列表和 CPU 使用率检测。");
 
@@ -436,11 +436,11 @@ public class SecurityCollector {
         File proc = new File("/proc");
         File[] pids = proc.listFiles(f -> f.isDirectory() && f.getName().matches("\\d+"));
         if (pids == null) {
-            add(items, "/proc 访问", "不可访问");
+            CollectorUtils.add(items, "/proc 访问", "不可访问");
             return;
         }
 
-        add(items, "运行中进程总数", String.valueOf(pids.length));
+        CollectorUtils.add(items, "运行中进程总数", String.valueOf(pids.length));
 
         // 挖矿 / 恶意进程关键词
         String[] suspiciousKeywords = {
@@ -466,17 +466,17 @@ public class SecurityCollector {
 
             // 展示前 15 个进程名
             if (shown < 15) {
-                add(items, "PID " + pidDir.getName(), cmdline);
+                CollectorUtils.add(items, "PID " + pidDir.getName(), cmdline);
                 shown++;
             }
         }
 
         if (!suspicious.isEmpty()) {
             for (String s : suspicious) {
-                add(items, "⚠ 可疑进程", "[HIGH]" + s);
+                CollectorUtils.add(items, "⚠ 可疑进程", "[HIGH]" + s);
             }
         } else {
-            add(items, "可疑进程", "未检测到已知挖矿/Root工具进程");
+            CollectorUtils.add(items, "可疑进程", "未检测到已知挖矿/Root工具进程");
         }
     }
 
@@ -528,11 +528,4 @@ public class SecurityCollector {
         try { return Integer.parseInt(s.trim()); } catch (Exception e) { return -1; }
     }
 
-    private void add(List<Map.Entry<String, String>> l, String k, String v) {
-        l.add(new AbstractMap.SimpleEntry<>(k, v != null ? v : "N/A"));
-    }
-
-    private void addHeader(List<Map.Entry<String, String>> l, String t) {
-        l.add(new AbstractMap.SimpleEntry<>("##" + t, ""));
-    }
 }

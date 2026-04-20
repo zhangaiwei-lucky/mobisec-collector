@@ -9,7 +9,6 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 
 import java.text.SimpleDateFormat;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -54,20 +53,20 @@ public class AppCollector {
             try {
                 packages = pm.getInstalledPackages(0);
             } catch (Exception e2) {
-                add(items, "错误", "无法获取应用列表: " + e2.getMessage());
+                CollectorUtils.add(items, "错误", "无法获取应用列表: " + e2.getMessage());
                 return items;
             }
         }
 
         if (packages.isEmpty()) {
-            add(items, "提示",
+            CollectorUtils.add(items, "提示",
                 "未获取到应用列表。\nAndroid 11+ 需要 QUERY_ALL_PACKAGES 权限。\n" +
                 "当前只能看到本应用自身。");
             return items;
         }
 
         // ── 统计概览 ─────────────────────────────────────────────
-        addHeader(items, "应用统计概览");
+        CollectorUtils.addHeader(items, "应用统计概览");
         int userApps = 0, sysApps = 0, highPermApps = 0;
         List<String> securityTools = new ArrayList<>();
 
@@ -82,20 +81,20 @@ public class AppCollector {
             }
         }
 
-        add(items, "用户应用数量",   String.valueOf(userApps));
-        add(items, "系统应用数量",   String.valueOf(sysApps));
-        add(items, "持有高危权限的应用", String.valueOf(highPermApps));
-        add(items, "检测到的安全/分析工具",
+        CollectorUtils.add(items, "用户应用数量",   String.valueOf(userApps));
+        CollectorUtils.add(items, "系统应用数量",   String.valueOf(sysApps));
+        CollectorUtils.add(items, "持有高危权限的应用", String.valueOf(highPermApps));
+        CollectorUtils.add(items, "检测到的安全/分析工具",
             securityTools.isEmpty() ? "无" : "[HIGH]" + String.join(", ", securityTools));
 
         // ── 用户应用详情（最多30条）─────────────────────────────
-        addHeader(items, "用户安装应用（权限分析）");
+        CollectorUtils.addHeader(items, "用户安装应用（权限分析）");
         int count = 0;
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             if (isSys) continue;
             if (count++ >= 30) {
-                add(items, "...", "还有更多应用（仅展示前30条）");
+                CollectorUtils.add(items, "...", "还有更多应用（仅展示前30条）");
                 break;
             }
 
@@ -116,16 +115,16 @@ public class AppCollector {
             String val = "v" + (pkg.versionName != null ? pkg.versionName : "?");
             if (perms.length() > 0)
                 val += "\n[HIGH]危险权限: " + perms.toString().trim();
-            add(items, label + "\n" + pkg.packageName, val);
+            CollectorUtils.add(items, label + "\n" + pkg.packageName, val);
         }
 
         // ── 应用使用统计 ──────────────────────────────────────────
-        addHeader(items, "应用使用统计（过去7天）");
+        CollectorUtils.addHeader(items, "应用使用统计（过去7天）");
         if (hasUsageStatsPerm()) {
             collectUsageStats(items);
         } else {
-            add(items, "未授权", "请在「设置→隐私→使用情况访问权限」中开启本应用的权限");
-            add(items, "数据价值", "可推断用户日程规律、常用应用、职业特征和生活习惯");
+            CollectorUtils.add(items, "未授权", "请在「设置→隐私→使用情况访问权限」中开启本应用的权限");
+            CollectorUtils.add(items, "数据价值", "可推断用户日程规律、常用应用、职业特征和生活习惯");
         }
 
         return items;
@@ -142,7 +141,7 @@ public class AppCollector {
                 usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, weekAgo, now);
 
             if (stats == null || stats.isEmpty()) {
-                add(items, "无数据", "queryUsageStats 返回空，请确认已授权");
+                CollectorUtils.add(items, "无数据", "queryUsageStats 返回空，请确认已授权");
                 return;
             }
 
@@ -154,18 +153,18 @@ public class AppCollector {
             filtered.sort((a, b) ->
                 Long.compare(b.getTotalTimeInForeground(), a.getTotalTimeInForeground()));
 
-            add(items, "有记录的应用数", String.valueOf(filtered.size()));
+            CollectorUtils.add(items, "有记录的应用数", String.valueOf(filtered.size()));
 
             SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
             int limit = Math.min(filtered.size(), 20);
             for (int i = 0; i < limit; i++) {
                 UsageStats s = filtered.get(i);
-                add(items, s.getPackageName(),
+                CollectorUtils.add(items, s.getPackageName(),
                     "[HIGH]使用 " + formatDuration(s.getTotalTimeInForeground())
                     + " | 最后: " + sdf.format(new Date(s.getLastTimeUsed())));
             }
         } catch (Exception e) {
-            add(items, "读取失败", e.getMessage());
+            CollectorUtils.add(items, "读取失败", e.getMessage());
         }
     }
 
@@ -197,11 +196,4 @@ public class AppCollector {
         return (min / 60) + "时" + (min % 60) + "分";
     }
 
-    private void add(List<Map.Entry<String, String>> l, String k, String v) {
-        l.add(new AbstractMap.SimpleEntry<>(k, v != null ? v : "N/A"));
-    }
-
-    private void addHeader(List<Map.Entry<String, String>> l, String t) {
-        l.add(new AbstractMap.SimpleEntry<>("##" + t, ""));
-    }
 }

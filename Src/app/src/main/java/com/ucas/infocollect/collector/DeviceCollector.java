@@ -18,7 +18,6 @@ import androidx.core.content.ContextCompat;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -46,30 +45,30 @@ public class DeviceCollector {
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // ── 基本硬件信息（无需权限）──────────────────────────────
-        addHeader(items, "基本设备信息");
-        add(items, "品牌",        Build.BRAND);
-        add(items, "厂商",        Build.MANUFACTURER);
-        add(items, "型号",        Build.MODEL);
-        add(items, "设备名",      Build.DEVICE);
-        add(items, "产品名",      Build.PRODUCT);
-        add(items, "硬件版本",    Build.HARDWARE);
-        add(items, "主板",        Build.BOARD);
+        CollectorUtils.addHeader(items, "基本设备信息");
+        CollectorUtils.add(items, "品牌",        Build.BRAND);
+        CollectorUtils.add(items, "厂商",        Build.MANUFACTURER);
+        CollectorUtils.add(items, "型号",        Build.MODEL);
+        CollectorUtils.add(items, "设备名",      Build.DEVICE);
+        CollectorUtils.add(items, "产品名",      Build.PRODUCT);
+        CollectorUtils.add(items, "硬件版本",    Build.HARDWARE);
+        CollectorUtils.add(items, "主板",        Build.BOARD);
 
         // ── Android 版本与安全信息（无需权限）──────────────────────
-        addHeader(items, "系统版本与安全");
-        add(items, "Android 版本", Build.VERSION.RELEASE);
-        add(items, "API Level",    String.valueOf(Build.VERSION.SDK_INT));
-        add(items, "安全补丁日期", Build.VERSION.SECURITY_PATCH);
-        add(items, "Build 指纹",   Build.FINGERPRINT);
-        add(items, "Build 类型",   Build.TYPE);       // user/userdebug/eng
-        add(items, "Build 标签",   Build.TAGS);       // release-keys/test-keys
+        CollectorUtils.addHeader(items, "系统版本与安全");
+        CollectorUtils.add(items, "Android 版本", Build.VERSION.RELEASE);
+        CollectorUtils.add(items, "API Level",    String.valueOf(Build.VERSION.SDK_INT));
+        CollectorUtils.add(items, "安全补丁日期", Build.VERSION.SECURITY_PATCH);
+        CollectorUtils.add(items, "Build 指纹",   Build.FINGERPRINT);
+        CollectorUtils.add(items, "Build 类型",   Build.TYPE);       // user/userdebug/eng
+        CollectorUtils.add(items, "Build 标签",   Build.TAGS);       // release-keys/test-keys
 
         // ── Android ID（可用于设备追踪，无需权限）──────────────────
-        addHeader(items, "设备标识符");
+        CollectorUtils.addHeader(items, "设备标识符");
         @SuppressLint("HardwareIds")
         String androidId = Settings.Secure.getString(
             context.getContentResolver(), Settings.Secure.ANDROID_ID);
-        add(items, "Android ID", "[HIGH]" + androidId);  // 设备唯一 ID，可追踪用户
+        CollectorUtils.add(items, "Android ID", "[HIGH]" + androidId);  // 设备唯一 ID，可追踪用户
 
         // IMEI（需 READ_PHONE_STATE 权限）
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
@@ -79,69 +78,69 @@ public class DeviceCollector {
                     (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     String imei = tm.getImei();
-                    add(items, "IMEI", "[HIGH]" + (imei != null ? imei : "不可用"));
+                    CollectorUtils.add(items, "IMEI", "[HIGH]" + (imei != null ? imei : "不可用"));
                 }
-                add(items, "运营商",       tm.getNetworkOperatorName());
-                add(items, "SIM 国家代码", tm.getSimCountryIso().toUpperCase());
-                add(items, "电话号码",     "[HIGH]" + tm.getLine1Number());
-                add(items, "设备 SoftwareVersion", tm.getDeviceSoftwareVersion());
+                CollectorUtils.add(items, "运营商",       tm.getNetworkOperatorName());
+                CollectorUtils.add(items, "SIM 国家代码", tm.getSimCountryIso().toUpperCase());
+                CollectorUtils.add(items, "电话号码",     "[HIGH]" + tm.getLine1Number());
+                CollectorUtils.add(items, "设备 SoftwareVersion", tm.getDeviceSoftwareVersion());
             } catch (Exception e) {
-                add(items, "电话信息", "读取失败: " + e.getMessage());
+                CollectorUtils.add(items, "电话信息", "读取失败: " + e.getMessage());
             }
         } else {
-            add(items, "IMEI / 运营商", "未授予 READ_PHONE_STATE 权限");
+            CollectorUtils.add(items, "IMEI / 运营商", "未授予 READ_PHONE_STATE 权限");
         }
 
         // ── CPU 信息（无需权限，读取 /proc/cpuinfo）──────────────────
-        addHeader(items, "处理器信息");
-        add(items, "CPU ABI(s)",    Build.SUPPORTED_ABIS[0]);
-        add(items, "CPU 核心数",    String.valueOf(Runtime.getRuntime().availableProcessors()));
+        CollectorUtils.addHeader(items, "处理器信息");
+        CollectorUtils.add(items, "CPU ABI(s)",    Build.SUPPORTED_ABIS[0]);
+        CollectorUtils.add(items, "CPU 核心数",    String.valueOf(Runtime.getRuntime().availableProcessors()));
         String cpuHardware = readCpuInfo("Hardware");
         String cpuModel    = readCpuInfo("model name");
-        add(items, "CPU Hardware", cpuHardware.isEmpty() ? "N/A" : cpuHardware);
-        add(items, "CPU 型号",     cpuModel.isEmpty()    ? "N/A" : cpuModel);
+        CollectorUtils.add(items, "CPU Hardware", cpuHardware.isEmpty() ? "N/A" : cpuHardware);
+        CollectorUtils.add(items, "CPU 型号",     cpuModel.isEmpty()    ? "N/A" : cpuModel);
 
         // ── 内存信息（无需权限）──────────────────────────────────
-        addHeader(items, "内存与存储");
+        CollectorUtils.addHeader(items, "内存与存储");
         ActivityManager am =
             (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
         ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
         am.getMemoryInfo(memInfo);
-        add(items, "总内存",     formatBytes(memInfo.totalMem));
-        add(items, "可用内存",   formatBytes(memInfo.availMem));
-        add(items, "低内存阈值", formatBytes(memInfo.threshold));
-        add(items, "当前低内存", String.valueOf(memInfo.lowMemory));
+        CollectorUtils.add(items, "总内存",     formatBytes(memInfo.totalMem));
+        CollectorUtils.add(items, "可用内存",   formatBytes(memInfo.availMem));
+        CollectorUtils.add(items, "低内存阈值", formatBytes(memInfo.threshold));
+        CollectorUtils.add(items, "当前低内存", String.valueOf(memInfo.lowMemory));
 
         // 内部存储
         StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
         long blockSize  = stat.getBlockSizeLong();
         long totalBlocks = stat.getBlockCountLong();
         long availBlocks = stat.getAvailableBlocksLong();
-        add(items, "内部存储总量", formatBytes(blockSize * totalBlocks));
-        add(items, "内部存储可用", formatBytes(blockSize * availBlocks));
+        CollectorUtils.add(items, "内部存储总量", formatBytes(blockSize * totalBlocks));
+        CollectorUtils.add(items, "内部存储可用", formatBytes(blockSize * availBlocks));
 
         // ── 屏幕信息（无需权限）──────────────────────────────────
-        addHeader(items, "屏幕参数");
+        CollectorUtils.addHeader(items, "屏幕参数");
         WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         DisplayMetrics dm = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(dm);
-        add(items, "分辨率",   dm.widthPixels + " x " + dm.heightPixels);
-        add(items, "DPI",     String.valueOf(dm.densityDpi));
-        add(items, "密度",    String.valueOf(dm.density));
-        add(items, "刷新率",  String.valueOf(wm.getDefaultDisplay().getRefreshRate()) + " Hz");
+        CollectorUtils.add(items, "分辨率",   dm.widthPixels + " x " + dm.heightPixels);
+        CollectorUtils.add(items, "DPI",     String.valueOf(dm.densityDpi));
+        CollectorUtils.add(items, "密度",    String.valueOf(dm.density));
+        CollectorUtils.add(items, "刷新率",  String.valueOf(wm.getDefaultDisplay().getRefreshRate()) + " Hz");
 
         // ── Root / 安全状态（无需权限）───────────────────────────
-        addHeader(items, "安全状态");
-        add(items, "是否 Root",         isRooted() ? "[HIGH]是" : "否");
-        add(items, "开发者选项",
+        CollectorUtils.addHeader(items, "安全状态");
+        CollectorUtils.add(items, "是否 Root",         isRooted() ? "[HIGH]是" : "否");
+        CollectorUtils.add(items, "开发者选项",
             Settings.Global.getInt(context.getContentResolver(),
                 Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
             ? "[HIGH]已开启" : "未开启");
-        add(items, "ADB 调试",
+        CollectorUtils.add(items, "ADB 调试",
             Settings.Global.getInt(context.getContentResolver(),
                 Settings.Global.ADB_ENABLED, 0) == 1
             ? "[HIGH]已开启" : "未开启");
-        add(items, "安装未知来源",
+        CollectorUtils.add(items, "安装未知来源",
             Settings.Secure.getInt(context.getContentResolver(),
                 Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
             ? "[HIGH]已允许" : "不允许");
@@ -185,11 +184,4 @@ public class DeviceCollector {
         return String.format("%.2f GB", mb / 1024.0);
     }
 
-    private void add(List<Map.Entry<String, String>> list, String k, String v) {
-        list.add(new AbstractMap.SimpleEntry<>(k, v != null ? v : "N/A"));
-    }
-
-    private void addHeader(List<Map.Entry<String, String>> list, String title) {
-        list.add(new AbstractMap.SimpleEntry<>("##" + title, ""));
-    }
 }

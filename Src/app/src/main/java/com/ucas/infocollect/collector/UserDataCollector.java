@@ -18,7 +18,6 @@ import android.provider.Settings;
 import androidx.core.content.ContextCompat;
 
 import java.text.SimpleDateFormat;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -44,37 +43,37 @@ public class UserDataCollector {
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // ── 剪贴板（需要焦点窗口，Android 10+）──────────────────
-        addHeader(items, "剪贴板内容（需 App 处于前台焦点）");
+        CollectorUtils.addHeader(items, "剪贴板内容（需 App 处于前台焦点）");
         readClipboard(items);
 
         // ── 锁屏安全状态（KeyguardManager，无需权限）──────────────
-        addHeader(items, "锁屏安全状态");
+        CollectorUtils.addHeader(items, "锁屏安全状态");
         readLockScreenInfo(items);
 
         // ── 系统账户（GET_ACCOUNTS）──────────────────────────────
-        addHeader(items, "设备关联账户");
+        CollectorUtils.addHeader(items, "设备关联账户");
         readAccounts(items);
 
         // ── 联系人（READ_CONTACTS）──────────────────────────────
-        addHeader(items, "联系人（前10条）");
+        CollectorUtils.addHeader(items, "联系人（前10条）");
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
                 == PackageManager.PERMISSION_GRANTED) {
             readContacts(items);
         } else {
-            add(items, "状态", "未授予 READ_CONTACTS 权限");
+            CollectorUtils.add(items, "状态", "未授予 READ_CONTACTS 权限");
         }
 
         // ── 通话记录（READ_CALL_LOG）────────────────────────────
-        addHeader(items, "通话记录（前10条）");
+        CollectorUtils.addHeader(items, "通话记录（前10条）");
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG)
                 == PackageManager.PERMISSION_GRANTED) {
             readCallLog(items);
         } else {
-            add(items, "状态", "未授予 READ_CALL_LOG 权限");
+            CollectorUtils.add(items, "状态", "未授予 READ_CALL_LOG 权限");
         }
 
         // ── 用户偏好（无需权限）──────────────────────────────────
-        addHeader(items, "用户偏好与设备习惯");
+        CollectorUtils.addHeader(items, "用户偏好与设备习惯");
         readPreferences(items);
 
         return items;
@@ -87,34 +86,34 @@ public class UserDataCollector {
             ClipboardManager cm =
                 (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
             if (cm == null) {
-                add(items, "剪贴板", "ClipboardManager 不可用");
+                CollectorUtils.add(items, "剪贴板", "ClipboardManager 不可用");
                 return;
             }
             if (!cm.hasPrimaryClip()) {
-                add(items, "剪贴板", "当前为空");
+                CollectorUtils.add(items, "剪贴板", "当前为空");
                 return;
             }
             ClipData clip = cm.getPrimaryClip();
             if (clip == null || clip.getItemCount() == 0) {
-                add(items, "剪贴板", "无内容");
+                CollectorUtils.add(items, "剪贴板", "无内容");
                 return;
             }
             ClipData.Item item = clip.getItemAt(0);
             CharSequence text = item.getText();
             if (text != null && text.length() > 0) {
-                add(items, "剪贴板文本", "[HIGH]" + text);
+                CollectorUtils.add(items, "剪贴板文本", "[HIGH]" + text);
             } else if (item.getUri() != null) {
-                add(items, "剪贴板 URI", "[HIGH]" + item.getUri().toString());
+                CollectorUtils.add(items, "剪贴板 URI", "[HIGH]" + item.getUri().toString());
             } else {
-                add(items, "剪贴板", "含内容但非文本/URI 类型");
+                CollectorUtils.add(items, "剪贴板", "含内容但非文本/URI 类型");
             }
-            add(items, "剪贴板 MIME 类型",
+            CollectorUtils.add(items, "剪贴板 MIME 类型",
                 clip.getDescription().getMimeType(0));
         } catch (SecurityException e) {
             // Android 10+ 后台读取剪贴板会抛 SecurityException
-            add(items, "剪贴板", "Android 10+ 限制：需在前台焦点状态读取\n请点击「刷新」按钮重试");
+            CollectorUtils.add(items, "剪贴板", "Android 10+ 限制：需在前台焦点状态读取\n请点击「刷新」按钮重试");
         } catch (Exception e) {
-            add(items, "剪贴板读取异常", e.getClass().getSimpleName() + ": " + e.getMessage());
+            CollectorUtils.add(items, "剪贴板读取异常", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
@@ -123,26 +122,26 @@ public class UserDataCollector {
             KeyguardManager km =
                 (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
             if (km == null) {
-                add(items, "锁屏", "KeyguardManager 不可用");
+                CollectorUtils.add(items, "锁屏", "KeyguardManager 不可用");
                 return;
             }
             // isDeviceSecure：是否设置了 PIN/图案/密码（API 23+）
             boolean isSecure = km.isDeviceSecure();
-            add(items, "是否设置锁屏密码", isSecure ? "[HIGH]是（设备受保护）" : "否（无锁屏）");
+            CollectorUtils.add(items, "是否设置锁屏密码", isSecure ? "[HIGH]是（设备受保护）" : "否（无锁屏）");
 
             // isKeyguardLocked：当前是否处于锁屏状态
             boolean isLocked = km.isKeyguardLocked();
-            add(items, "当前是否锁屏", String.valueOf(isLocked));
+            CollectorUtils.add(items, "当前是否锁屏", String.valueOf(isLocked));
 
             // 尝试读取屏幕超时时间（间接判断安全习惯）
             ContentResolver cr = context.getContentResolver();
             String timeout = Settings.System.getString(cr, Settings.System.SCREEN_OFF_TIMEOUT);
             if (timeout != null) {
                 long ms = Long.parseLong(timeout);
-                add(items, "屏幕自动锁定时间", formatDuration(ms));
+                CollectorUtils.add(items, "屏幕自动锁定时间", formatDuration(ms));
             }
         } catch (Exception e) {
-            add(items, "锁屏状态读取失败", e.getMessage());
+            CollectorUtils.add(items, "锁屏状态读取失败", e.getMessage());
         }
 
         // 开发者选项和 ADB 状态（多重读取，适配不同 ROM）
@@ -152,7 +151,7 @@ public class UserDataCollector {
             // ADB 调试状态（Settings.Global，通用）
             int adb = Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, -1);
             if (adb == -1) adb = Settings.Secure.getInt(cr, "adb_enabled", 0);
-            add(items, "ADB 调试",
+            CollectorUtils.add(items, "ADB 调试",
                 adb == 1 ? "[HIGH]已开启（USB 可直接提取数据）" : "关闭");
 
             // 开发者选项：先读 Global，MIUI/ColorOS 等 ROM 可能存在 Secure 里
@@ -167,11 +166,11 @@ public class UserDataCollector {
             }
             // 如果 ADB 已开，开发者模式必然开启
             if (adb == 1) dev = 1;
-            add(items, "开发者选项",
+            CollectorUtils.add(items, "开发者选项",
                 dev == 1 ? "[HIGH]已开启" : "关闭");
 
         } catch (Exception e) {
-            add(items, "开发者/ADB 状态读取失败", e.getMessage());
+            CollectorUtils.add(items, "开发者/ADB 状态读取失败", e.getMessage());
         }
     }
 
@@ -179,7 +178,7 @@ public class UserDataCollector {
         // 尝试有权限和无权限两种路径
         boolean hasPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED;
-        add(items, "GET_ACCOUNTS 权限", hasPermission ? "已授权" : "未授权");
+        CollectorUtils.add(items, "GET_ACCOUNTS 权限", hasPermission ? "已授权" : "未授权");
 
         try {
             AccountManager am = AccountManager.get(context);
@@ -188,15 +187,15 @@ public class UserDataCollector {
                 : am.getAccountsByType("com.google");  // 部分账户类型无需权限
 
             if (accounts == null || accounts.length == 0) {
-                add(items, "账户", "未获取到账户信息");
+                CollectorUtils.add(items, "账户", "未获取到账户信息");
             } else {
-                add(items, "账户总数", String.valueOf(accounts.length));
+                CollectorUtils.add(items, "账户总数", String.valueOf(accounts.length));
                 for (Account acc : accounts) {
-                    add(items, acc.name, "[HIGH]类型: " + acc.type);
+                    CollectorUtils.add(items, acc.name, "[HIGH]类型: " + acc.type);
                 }
             }
         } catch (Exception e) {
-            add(items, "账户读取异常", e.getClass().getSimpleName() + ": " + e.getMessage());
+            CollectorUtils.add(items, "账户读取异常", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
@@ -213,20 +212,20 @@ public class UserDataCollector {
                 ContactsContract.CommonDataKinds.Phone.TIMES_CONTACTED + " DESC"
             );
             if (cursor == null) {
-                add(items, "联系人", "查询返回 null");
+                CollectorUtils.add(items, "联系人", "查询返回 null");
                 return;
             }
-            add(items, "联系人总数", String.valueOf(cursor.getCount()));
+            CollectorUtils.add(items, "联系人总数", String.valueOf(cursor.getCount()));
             int count = 0;
             while (cursor.moveToNext() && count++ < 10) {
                 String name   = cursor.getString(0);
                 String number = cursor.getString(1);
-                add(items, name != null ? name : "(无名称)",
+                CollectorUtils.add(items, name != null ? name : "(无名称)",
                     "[HIGH]" + (number != null ? number : "无号码"));
             }
             cursor.close();
         } catch (Exception e) {
-            add(items, "联系人读取异常", e.getMessage());
+            CollectorUtils.add(items, "联系人读取异常", e.getMessage());
         }
     }
 
@@ -245,10 +244,10 @@ public class UserDataCollector {
                 CallLog.Calls.DATE + " DESC"
             );
             if (cursor == null) {
-                add(items, "通话记录", "查询返回 null");
+                CollectorUtils.add(items, "通话记录", "查询返回 null");
                 return;
             }
-            add(items, "通话记录总数", String.valueOf(cursor.getCount()));
+            CollectorUtils.add(items, "通话记录总数", String.valueOf(cursor.getCount()));
             SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
             int count = 0;
             while (cursor.moveToNext() && count++ < 10) {
@@ -260,27 +259,27 @@ public class UserDataCollector {
                 String typeStr = type == CallLog.Calls.INCOMING_TYPE ? "接入" :
                                  type == CallLog.Calls.OUTGOING_TYPE ? "呼出" : "未接";
                 String label = (name != null && !name.isEmpty()) ? name : number;
-                add(items, label + " [" + typeStr + "]",
+                CollectorUtils.add(items, label + " [" + typeStr + "]",
                     "[HIGH]" + sdf.format(new Date(date)) + " 时长:" + dur + "s");
             }
             cursor.close();
         } catch (Exception e) {
-            add(items, "通话记录读取异常", e.getMessage());
+            CollectorUtils.add(items, "通话记录读取异常", e.getMessage());
         }
     }
 
     private void readPreferences(List<Map.Entry<String, String>> items) {
         try {
             ContentResolver cr = context.getContentResolver();
-            add(items, "时区",     TimeZone.getDefault().getID());
-            add(items, "系统语言", Locale.getDefault().toString());
-            add(items, "字体缩放",
+            CollectorUtils.add(items, "时区",     TimeZone.getDefault().getID());
+            CollectorUtils.add(items, "系统语言", Locale.getDefault().toString());
+            CollectorUtils.add(items, "字体缩放",
                 Settings.System.getString(cr, Settings.System.FONT_SCALE));
-            add(items, "屏幕亮度",
+            CollectorUtils.add(items, "屏幕亮度",
                 Settings.System.getString(cr, Settings.System.SCREEN_BRIGHTNESS));
             String autoRotate = Settings.System.getString(
                 cr, Settings.System.ACCELEROMETER_ROTATION);
-            add(items, "自动旋转", "1".equals(autoRotate) ? "开启" : "关闭");
+            CollectorUtils.add(items, "自动旋转", "1".equals(autoRotate) ? "开启" : "关闭");
 
             // 安装未知来源
             String installUnknown;
@@ -291,9 +290,9 @@ public class UserDataCollector {
                     Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
                     ? "[HIGH]已允许" : "不允许";
             }
-            add(items, "安装未知来源 App", installUnknown);
+            CollectorUtils.add(items, "安装未知来源 App", installUnknown);
         } catch (Exception e) {
-            add(items, "偏好读取失败", e.getMessage());
+            CollectorUtils.add(items, "偏好读取失败", e.getMessage());
         }
     }
 
@@ -305,11 +304,4 @@ public class UserDataCollector {
         return (min / 60) + " 小时 " + (min % 60) + " 分钟";
     }
 
-    private void add(List<Map.Entry<String, String>> l, String k, String v) {
-        l.add(new AbstractMap.SimpleEntry<>(k, v != null ? v : "N/A"));
-    }
-
-    private void addHeader(List<Map.Entry<String, String>> l, String t) {
-        l.add(new AbstractMap.SimpleEntry<>("##" + t, ""));
-    }
 }

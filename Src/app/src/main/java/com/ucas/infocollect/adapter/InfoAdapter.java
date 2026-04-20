@@ -10,13 +10,14 @@ import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.ucas.infocollect.R;
+import com.ucas.infocollect.collector.CollectorUtils;
 
 import java.util.List;
 import java.util.Map;
 
 /**
  * 通用键值对信息列表适配器
- * 支持分组标题（key 以 "##" 开头的条目显示为标题）
+ * 支持分组标题（key 以 CollectorUtils.HEADER_PREFIX 开头的条目显示为标题）
  */
 public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
@@ -37,7 +38,8 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
     @Override
     public int getItemViewType(int position) {
-        return items.get(position).getKey().startsWith("##") ? TYPE_HEADER : TYPE_ITEM;
+        return items.get(position).getKey().startsWith(CollectorUtils.HEADER_PREFIX)
+            ? TYPE_HEADER : TYPE_ITEM;
     }
 
     @NonNull
@@ -57,7 +59,8 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     public void onBindViewHolder(@NonNull RecyclerView.ViewHolder holder, int position) {
         Map.Entry<String, String> entry = items.get(position);
         if (holder instanceof HeaderHolder) {
-            ((HeaderHolder) holder).title.setText(entry.getKey().substring(2));
+            ((HeaderHolder) holder).title.setText(
+                entry.getKey().substring(CollectorUtils.HEADER_PREFIX.length()));
         } else {
             ItemHolder h = (ItemHolder) holder;
             h.key.setText(entry.getKey());
