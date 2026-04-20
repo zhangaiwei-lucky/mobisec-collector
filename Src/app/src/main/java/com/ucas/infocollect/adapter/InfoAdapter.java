@@ -7,6 +7,7 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.ucas.infocollect.R;
@@ -31,9 +32,14 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     }
 
     public void updateData(List<Map.Entry<String, String>> newItems) {
+        List<Map.Entry<String, String>> safeNewItems =
+            newItems != null ? newItems : new java.util.ArrayList<>();
+        List<Map.Entry<String, String>> oldItems = new java.util.ArrayList<>(items);
+        DiffUtil.DiffResult diffResult =
+            DiffUtil.calculateDiff(new InfoDiffCallback(oldItems, safeNewItems));
         items.clear();
-        items.addAll(newItems);
-        notifyDataSetChanged();
+        items.addAll(safeNewItems);
+        diffResult.dispatchUpdatesTo(this);
     }
 
     @Override
