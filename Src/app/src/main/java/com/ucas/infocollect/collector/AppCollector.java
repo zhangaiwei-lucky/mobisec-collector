@@ -18,7 +18,7 @@ import java.util.Map;
 /**
  * 已安装应用与使用情况收集器
  */
-public class AppCollector {
+public class AppCollector implements InfoCollector {
 
     private static final String[] SENSITIVE_PERMISSIONS = {
         "READ_CONTACTS", "READ_CALL_LOG", "READ_SMS", "SEND_SMS",
@@ -34,15 +34,9 @@ public class AppCollector {
         "supersu", "magisk", "xposed", "frida", "objection"
     };
 
-    private final Context context;
-    private final PackageManager pm;
-
-    public AppCollector(Context context) {
-        this.context = context;
-        this.pm = context.getPackageManager();
-    }
-
-    public List<Map.Entry<String, String>> collect() {
+    @Override
+    public List<Map.Entry<String, String>> collect(Context context) {
+        PackageManager pm = context.getPackageManager();
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // 获取应用列表：优先用 GET_PERMISSIONS，失败则降级到 0
@@ -120,8 +114,8 @@ public class AppCollector {
 
         // ── 应用使用统计 ──────────────────────────────────────────
         CollectorUtils.addHeader(items, "应用使用统计（过去7天）");
-        if (hasUsageStatsPerm()) {
-            collectUsageStats(items);
+        if (hasUsageStatsPerm(context)) {
+            collectUsageStats(context, items);
         } else {
             CollectorUtils.add(items, "未授权", "请在「设置→隐私→使用情况访问权限」中开启本应用的权限");
             CollectorUtils.add(items, "数据价值", "可推断用户日程规律、常用应用、职业特征和生活习惯");
@@ -130,7 +124,7 @@ public class AppCollector {
         return items;
     }
 
-    private void collectUsageStats(List<Map.Entry<String, String>> items) {
+    private void collectUsageStats(Context context, List<Map.Entry<String, String>> items) {
         try {
             UsageStatsManager usm =
                 (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
@@ -168,7 +162,7 @@ public class AppCollector {
         }
     }
 
-    private boolean hasUsageStatsPerm() {
+    private boolean hasUsageStatsPerm(Context context) {
         try {
             AppOpsManager aom =
                 (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);

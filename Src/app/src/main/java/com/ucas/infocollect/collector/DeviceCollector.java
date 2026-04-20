@@ -33,15 +33,10 @@ import java.util.Map;
  * - 运营商与 IMEI（需 READ_PHONE_STATE）
  * - Root / 开发者选项状态
  */
-public class DeviceCollector {
+public class DeviceCollector implements InfoCollector {
 
-    private final Context context;
-
-    public DeviceCollector(Context context) {
-        this.context = context;
-    }
-
-    public List<Map.Entry<String, String>> collect() {
+    @Override
+    public List<Map.Entry<String, String>> collect(Context context) {
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // ── 基本硬件信息（无需权限）──────────────────────────────

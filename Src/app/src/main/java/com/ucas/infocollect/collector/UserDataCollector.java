@@ -31,34 +31,29 @@ import java.util.TimeZone;
  * 注意：本 Fragment 通过 BaseInfoFragment 的后台线程加载，
  * 且只在用户切换到"用户"标签时才初始化，确保 App 持有焦点（剪贴板读取需要）。
  */
-public class UserDataCollector {
+public class UserDataCollector implements InfoCollector {
 
-    private final Context context;
-
-    public UserDataCollector(Context context) {
-        this.context = context;
-    }
-
-    public List<Map.Entry<String, String>> collect() {
+    @Override
+    public List<Map.Entry<String, String>> collect(Context context) {
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // ── 剪贴板（需要焦点窗口，Android 10+）──────────────────
         CollectorUtils.addHeader(items, "剪贴板内容（需 App 处于前台焦点）");
-        readClipboard(items);
+        readClipboard(context, items);
 
         // ── 锁屏安全状态（KeyguardManager，无需权限）──────────────
         CollectorUtils.addHeader(items, "锁屏安全状态");
-        readLockScreenInfo(items);
+        readLockScreenInfo(context, items);
 
         // ── 系统账户（GET_ACCOUNTS）──────────────────────────────
         CollectorUtils.addHeader(items, "设备关联账户");
-        readAccounts(items);
+        readAccounts(context, items);
 
         // ── 联系人（READ_CONTACTS）──────────────────────────────
         CollectorUtils.addHeader(items, "联系人（前10条）");
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
                 == PackageManager.PERMISSION_GRANTED) {
-            readContacts(items);
+            readContacts(context, items);
         } else {
             CollectorUtils.add(items, "状态", "未授予 READ_CONTACTS 权限");
         }
@@ -67,21 +62,21 @@ public class UserDataCollector {
         CollectorUtils.addHeader(items, "通话记录（前10条）");
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG)
                 == PackageManager.PERMISSION_GRANTED) {
-            readCallLog(items);
+            readCallLog(context, items);
         } else {
             CollectorUtils.add(items, "状态", "未授予 READ_CALL_LOG 权限");
         }
 
         // ── 用户偏好（无需权限）──────────────────────────────────
         CollectorUtils.addHeader(items, "用户偏好与设备习惯");
-        readPreferences(items);
+        readPreferences(context, items);
 
         return items;
     }
 
     // ─────────────────────────────────────────────────────────────
 
-    private void readClipboard(List<Map.Entry<String, String>> items) {
+    private void readClipboard(Context context, List<Map.Entry<String, String>> items) {
         try {
             ClipboardManager cm =
                 (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
@@ -117,7 +112,7 @@ public class UserDataCollector {
         }
     }
 
-    private void readLockScreenInfo(List<Map.Entry<String, String>> items) {
+    private void readLockScreenInfo(Context context, List<Map.Entry<String, String>> items) {
         try {
             KeyguardManager km =
                 (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
@@ -174,7 +169,7 @@ public class UserDataCollector {
         }
     }
 
-    private void readAccounts(List<Map.Entry<String, String>> items) {
+    private void readAccounts(Context context, List<Map.Entry<String, String>> items) {
         // 尝试有权限和无权限两种路径
         boolean hasPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED;
@@ -199,7 +194,7 @@ public class UserDataCollector {
         }
     }
 
-    private void readContacts(List<Map.Entry<String, String>> items) {
+    private void readContacts(Context context, List<Map.Entry<String, String>> items) {
         try {
             Cursor cursor = context.getContentResolver().query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -229,7 +224,7 @@ public class UserDataCollector {
         }
     }
 
-    private void readCallLog(List<Map.Entry<String, String>> items) {
+    private void readCallLog(Context context, List<Map.Entry<String, String>> items) {
         try {
             Cursor cursor = context.getContentResolver().query(
                 CallLog.Calls.CONTENT_URI,
@@ -268,7 +263,7 @@ public class UserDataCollector {
         }
     }
 
-    private void readPreferences(List<Map.Entry<String, String>> items) {
+    private void readPreferences(Context context, List<Map.Entry<String, String>> items) {
         try {
             ContentResolver cr = context.getContentResolver();
             CollectorUtils.add(items, "时区",     TimeZone.getDefault().getID());

@@ -45,15 +45,10 @@ import java.util.Map;
  * - WiFi 历史可推断用户常去地点
  * - MAC 地址可用于网络层追踪（部分场景）
  */
-public class NetworkCollector {
+public class NetworkCollector implements InfoCollector {
 
-    private final Context context;
-
-    public NetworkCollector(Context context) {
-        this.context = context;
-    }
-
-    public List<Map.Entry<String, String>> collect() {
+    @Override
+    public List<Map.Entry<String, String>> collect(Context context) {
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         ConnectivityManager cm =

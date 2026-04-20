@@ -7,7 +7,6 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
-import android.content.pm.Signature;
 import android.os.Build;
 
 import java.io.BufferedReader;
@@ -15,7 +14,6 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.Method;
-import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -52,17 +50,11 @@ import java.util.Map;
  *    - 允许明文 HTTP 的应用（中间人攻击面）
  *    -  HTTPS 降级攻击案例
  */
-public class SecurityCollector {
+public class SecurityCollector implements InfoCollector {
 
-    private final Context context;
-    private final PackageManager pm;
-
-    public SecurityCollector(Context context) {
-        this.context = context;
-        this.pm = context.getPackageManager();
-    }
-
-    public List<Map.Entry<String, String>> collect() {
+    @Override
+    public List<Map.Entry<String, String>> collect(Context context) {
+        PackageManager pm = context.getPackageManager();
         List<Map.Entry<String, String>> items = new ArrayList<>();
 
         // ── 1. SELinux 状态（：SEAndroid）────────────────
@@ -75,23 +67,23 @@ public class SecurityCollector {
 
         // ── 3. 导出组件扫描（：Intent攻击 / CP路径遍历）──
         CollectorUtils.addHeader(items, "导出组件扫描（Intent/IPC 攻击面）");
-        scanExportedComponents(items);
+        scanExportedComponents(pm, items);
 
         // ── 4. ContentProvider 路径遍历风险────────────
         CollectorUtils.addHeader(items, "Content Provider 路径遍历风险");
-        scanDangerousProviders(items);
+        scanDangerousProviders(pm, items);
 
         // ── 5. APK 签名方案分析（Janus CVE-2017-13156）────────────
         CollectorUtils.addHeader(items, "APK 签名方案 / Janus 漏洞");
-        analyzeSignatureSchemes(items);
+        analyzeSignatureSchemes(pm, items);
 
         // ── 6. 过权限应用统计──────────────────
         CollectorUtils.addHeader(items, "过权限应用 Top 10");
-        scanOverPrivilegedApps(items);
+        scanOverPrivilegedApps(pm, items);
 
         // ── 7. 允许明文 HTTP 的应用（HTTPS降级风险）──────────────
         CollectorUtils.addHeader(items, "允许明文 HTTP 的应用（MITM 攻击面）");
-        scanCleartextApps(items);
+        scanCleartextApps(pm, items);
 
         // ── 8. 运行中服务 / 可疑后台进程（挖矿木马特征）──────────
         CollectorUtils.addHeader(items, "运行中进程与可疑服务");
@@ -189,7 +181,7 @@ public class SecurityCollector {
     // ─────────────────────────────────────────────────────────────
     // 3. 导出组件扫描（Intent Scheme URL 攻击面）
     // ─────────────────────────────────────────────────────────────
-    private void scanExportedComponents(List<Map.Entry<String, String>> items) {
+    private void scanExportedComponents(PackageManager pm, List<Map.Entry<String, String>> items) {
         List<PackageInfo> packages;
         try {
             packages = pm.getInstalledPackages(
@@ -258,7 +250,7 @@ public class SecurityCollector {
     // ─────────────────────────────────────────────────────────────
     // 4. Content Provider 路径遍历风险
     // ─────────────────────────────────────────────────────────────
-    private void scanDangerousProviders(List<Map.Entry<String, String>> items) {
+    private void scanDangerousProviders(PackageManager pm, List<Map.Entry<String, String>> items) {
         List<PackageInfo> packages;
         try {
             packages = pm.getInstalledPackages(PackageManager.GET_PROVIDERS);
@@ -303,7 +295,7 @@ public class SecurityCollector {
     // ─────────────────────────────────────────────────────────────
     // 5. APK 签名方案分析（Janus CVE-2017-13156，）
     // ─────────────────────────────────────────────────────────────
-    private void analyzeSignatureSchemes(List<Map.Entry<String, String>> items) {
+    private void analyzeSignatureSchemes(PackageManager pm, List<Map.Entry<String, String>> items) {
         CollectorUtils.add(items, "Janus 漏洞说明",
             "CVE-2017-13156：仅用 V1 签名的 APK 在 Android 5.1-8.0 上\n" +
             "可在文件头附加 DEX 字节码而不破坏签名，实现无感更新劫持");
@@ -351,7 +343,7 @@ public class SecurityCollector {
     // ─────────────────────────────────────────────────────────────
     // 6. 过权限应用统计
     // ─────────────────────────────────────────────────────────────
-    private void scanOverPrivilegedApps(List<Map.Entry<String, String>> items) {
+    private void scanOverPrivilegedApps(PackageManager pm, List<Map.Entry<String, String>> items) {
         CollectorUtils.add(items, "背景",
             "研究表明 56% 的应用存在过度权限声明；\n" +
             "60% 的应用拥有 INTERNET 权限（数据外传通道）");
@@ -391,7 +383,7 @@ public class SecurityCollector {
     // ─────────────────────────────────────────────────────────────
     // 7. 明文 HTTP 应用（HTTPS 降级风险，）
     // ─────────────────────────────────────────────────────────────
-    private void scanCleartextApps(List<Map.Entry<String, String>> items) {
+    private void scanCleartextApps(PackageManager pm, List<Map.Entry<String, String>> items) {
         CollectorUtils.add(items, "背景",
             "AFNetworking 漏洞案例：1500+ 应用因错误配置 SSL 验证，\n" +
             "在同一 WiFi 下可被 MITM 攻击并截获所有 HTTPS 流量");
