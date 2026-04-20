@@ -13,10 +13,16 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.lang.reflect.Method;
+import java.util.AbstractMap;
 import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * 安全分析收集器
@@ -51,6 +57,76 @@ import java.util.Map;
  *    -  HTTPS 降级攻击案例
  */
 public class SecurityCollector implements InfoCollector {
+
+    private static final int MAX_SIGNATURE_SAMPLE = 5;
+    private static final long MAX_SIGNING_BLOCK_BYTES = 8L * 1024L * 1024L; // 8 MB
+    private static final int ZIP_EOCD_MIN_SIZE = 22;
+    private static final int ZIP_EOCD_MAX_SEARCH = 65535 + ZIP_EOCD_MIN_SIZE;
+    private static final int ZIP_EOCD_MAGIC = 0x06054b50;
+    private static final long APK_SIG_BLOCK_MAGIC_LOW = 0x20676953204b5041L;   // "APK Sig "
+    private static final long APK_SIG_BLOCK_MAGIC_HIGH = 0x3234206b636f6c42L;  // "Block 42"
+    private static final int APK_SIG_SCHEME_V2_BLOCK_ID = 0x7109871a;
+    private static final int APK_SIG_SCHEME_V3_BLOCK_ID = 0xf05368c0;
+    private static final int APK_SIG_SCHEME_V31_BLOCK_ID = 0x1b93ad61;
+
+    private enum DetectionConfidence {
+        HIGH,
+        MEDIUM,
+        LOW
+    }
+
+    private static class SignatureDetectionResult {
+        final String packageName;
+        final boolean hasV1Signature;
+        final boolean hasV2Block;
+        final boolean hasV3Block;
+        final Boolean hasV4Block; // null means unknown/not parsed
+        final DetectionConfidence detectionConfidence;
+        final String detectionNote;
+        final boolean undetermined;
+
+        SignatureDetectionResult(
+                String packageName,
+                boolean hasV1Signature,
+                boolean hasV2Block,
+                boolean hasV3Block,
+                Boolean hasV4Block,
+                DetectionConfidence detectionConfidence,
+                String detectionNote,
+                boolean undetermined
+        ) {
+            this.packageName = packageName;
+            this.hasV1Signature = hasV1Signature;
+            this.hasV2Block = hasV2Block;
+            this.hasV3Block = hasV3Block;
+            this.hasV4Block = hasV4Block;
+            this.detectionConfidence = detectionConfidence;
+            this.detectionNote = detectionNote;
+            this.undetermined = undetermined;
+        }
+    }
+
+    private static class SigningBlockParseResult {
+        final boolean parsed;
+        final boolean hasSigningBlock;
+        final boolean hasV2Block;
+        final boolean hasV3Block;
+        final String note;
+
+        SigningBlockParseResult(
+                boolean parsed,
+                boolean hasSigningBlock,
+                boolean hasV2Block,
+                boolean hasV3Block,
+                String note
+        ) {
+            this.parsed = parsed;
+            this.hasSigningBlock = hasSigningBlock;
+            this.hasV2Block = hasV2Block;
+            this.hasV3Block = hasV3Block;
+            this.note = note;
+        }
+    }
 
     @Override
     public List<Map.Entry<String, String>> collect(Context context) {
@@ -295,49 +371,66 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 5. APK 签名方案分析（Janus CVE-2017-13156，）
     // ─────────────────────────────────────────────────────────────
+    /**
+     * 说明：
+     * 1) 当前实现通过 APK 文件结构（META-INF 迹象 + APK Signing Block）做风险初筛。
+     * 2) 这是“工程化近似检测”，并非完整法证级审计流程。
+     * 3) 检测结论仅供安全提示，不应作为漏洞归因的唯一依据。
+     */
     private void analyzeSignatureSchemes(PackageManager pm, List<Map.Entry<String, String>> items) {
         CollectorUtils.add(items, "Janus 漏洞说明",
             "CVE-2017-13156：仅用 V1 签名的 APK 在 Android 5.1-8.0 上\n" +
             "可在文件头附加 DEX 字节码而不破坏签名，实现无感更新劫持");
-        CollectorUtils.add(items, "当前系统 API",    String.valueOf(Build.VERSION.SDK_INT));
+        CollectorUtils.add(items, "审计提示",
+            "以下结果用于风险提示与初筛，不是完整 APK 签名法证审计结论");
+        CollectorUtils.add(items, "当前系统 API", String.valueOf(Build.VERSION.SDK_INT));
         CollectorUtils.add(items, "Janus 影响范围", Build.VERSION.SDK_INT <= 26
             ? "[HIGH]当前系统在受影响范围内（API ≤ 26）"
-            : "当前系统不受 Janus 影响（API > 26，强制 V2+ 签名验证）");
+            : "当前系统不在典型受影响范围（API > 26）");
 
-        // 扫描只使用 V1 签名的用户应用（潜在受害者）
+        // 仅扫描用户应用，避免系统应用噪声
         List<PackageInfo> packages;
         try {
-            packages = pm.getInstalledPackages(PackageManager.GET_SIGNING_CERTIFICATES);
+            packages = pm.getInstalledPackages(0);
         } catch (Exception e) {
-            try {
-                packages = pm.getInstalledPackages(PackageManager.GET_SIGNATURES);
-            } catch (Exception e2) {
-                CollectorUtils.add(items, "签名读取失败", e2.getMessage());
-                return;
-            }
+            CollectorUtils.add(items, "签名扫描失败", e.getMessage());
+            return;
         }
 
-        int v1Only = 0, total = 0;
+        int total = 0;
+        List<SignatureDetectionResult> modernSigned = new ArrayList<>();
+        List<SignatureDetectionResult> possibleV1Only = new ArrayList<>();
+        List<SignatureDetectionResult> undetermined = new ArrayList<>();
+
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             if (isSys) continue;
             total++;
-            // 如果 signingInfo 为 null 或只有旧式 signatures，推断为 V1
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                if (pkg.signingInfo != null &&
-                    !pkg.signingInfo.hasMultipleSigners() &&
-                    pkg.signingInfo.getSigningCertificateHistory() != null &&
-                    pkg.signingInfo.getSigningCertificateHistory().length == 1) {
-                    v1Only++;
-                }
+
+            SignatureDetectionResult result = detectSignatureScheme(pkg);
+            if (result.undetermined) {
+                undetermined.add(result);
+            } else if (result.hasV2Block || result.hasV3Block) {
+                modernSigned.add(result);
+            } else if (result.hasV1Signature) {
+                possibleV1Only.add(result);
+            } else {
+                undetermined.add(result);
             }
         }
+
         CollectorUtils.add(items, "扫描用户应用总数", String.valueOf(total));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            CollectorUtils.add(items, "疑似 V1-only 签名应用",
-                v1Only > 0 ? "[HIGH]" + v1Only + " 个（若系统 ≤ API26 则受 Janus 影响）"
-                           : String.valueOf(v1Only));
-        }
+        CollectorUtils.add(items, "检测到 V2/V3 签名",
+            modernSigned.isEmpty() ? "0" : modernSigned.size() + " 个");
+        CollectorUtils.add(items, "可能 V1-only（中/低置信度）",
+            possibleV1Only.isEmpty() ? "0"
+                : "[HIGH]" + possibleV1Only.size() + " 个（需进一步离线审计确认）");
+        CollectorUtils.add(items, "无法判断（解析失败或读取受限）",
+            undetermined.isEmpty() ? "0" : undetermined.size() + " 个");
+
+        addSignatureSamples(items, "V2/V3 样本", modernSigned, MAX_SIGNATURE_SAMPLE, false);
+        addSignatureSamples(items, "可能 V1-only 样本", possibleV1Only, MAX_SIGNATURE_SAMPLE, true);
+        addSignatureSamples(items, "无法判断样本", undetermined, MAX_SIGNATURE_SAMPLE, false);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -475,6 +568,217 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 工具方法
     // ─────────────────────────────────────────────────────────────
+
+    private SignatureDetectionResult detectSignatureScheme(PackageInfo pkg) {
+        String packageName = pkg.packageName != null ? pkg.packageName : "(unknown)";
+        ApplicationInfo appInfo = pkg.applicationInfo;
+        if (appInfo == null || appInfo.sourceDir == null || appInfo.sourceDir.isEmpty()) {
+            return new SignatureDetectionResult(
+                packageName, false, false, false, null,
+                DetectionConfidence.LOW, "无法获取 APK 路径", true);
+        }
+
+        File apkFile = new File(appInfo.sourceDir);
+        if (!apkFile.exists() || !apkFile.canRead()) {
+            return new SignatureDetectionResult(
+                packageName, false, false, false, null,
+                DetectionConfidence.LOW, "APK 文件不存在或不可读", true);
+        }
+
+        boolean hasV1 = detectV1Signature(apkFile);
+        SigningBlockParseResult blockResult = parseSigningBlock(apkFile);
+
+        if (!blockResult.parsed) {
+            String note = "Signing Block 解析失败: " + blockResult.note
+                + (hasV1 ? "；检测到 META-INF 签名迹象" : "");
+            return new SignatureDetectionResult(
+                packageName, hasV1, false, false, null,
+                DetectionConfidence.LOW, note, true);
+        }
+
+        if (blockResult.hasV2Block || blockResult.hasV3Block) {
+            String note = (blockResult.hasV2Block ? "检测到 V2 " : "")
+                + (blockResult.hasV3Block ? "检测到 V3 " : "")
+                + "Signing Block";
+            return new SignatureDetectionResult(
+                packageName, hasV1, blockResult.hasV2Block, blockResult.hasV3Block, null,
+                DetectionConfidence.HIGH, note.trim(), false);
+        }
+
+        if (hasV1) {
+            String note = blockResult.hasSigningBlock
+                ? "有 META-INF 签名文件，但未检测到 V2/V3 Block"
+                : "检测到 META-INF 签名文件，且未发现 APK Signing Block";
+            DetectionConfidence confidence = blockResult.hasSigningBlock
+                ? DetectionConfidence.MEDIUM : DetectionConfidence.HIGH;
+            return new SignatureDetectionResult(
+                packageName, true, false, false, null,
+                confidence, note, false);
+        }
+
+        return new SignatureDetectionResult(
+            packageName, false, false, false, null,
+            DetectionConfidence.LOW, "未检测到 V1 迹象，且无 V2/V3 Block 证据", true);
+    }
+
+    private boolean detectV1Signature(File apkFile) {
+        try (ZipFile zipFile = new ZipFile(apkFile)) {
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (name == null) continue;
+                String upper = name.toUpperCase(Locale.ROOT);
+                if (upper.startsWith("META-INF/")
+                        && (upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC"))) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+            return false;
+        }
+        return false;
+    }
+
+    private SigningBlockParseResult parseSigningBlock(File apkFile) {
+        try (RandomAccessFile raf = new RandomAccessFile(apkFile, "r")) {
+            long fileSize = raf.length();
+            if (fileSize < ZIP_EOCD_MIN_SIZE) {
+                return new SigningBlockParseResult(false, false, false, false, "文件太小，不是有效 APK");
+            }
+
+            long eocdOffset = findEocdOffset(raf, fileSize);
+            if (eocdOffset < 0) {
+                return new SigningBlockParseResult(false, false, false, false, "未找到 ZIP EOCD");
+            }
+
+            long centralDirOffset = readUInt32LE(raf, eocdOffset + 16);
+            if (centralDirOffset <= 0 || centralDirOffset > fileSize) {
+                return new SigningBlockParseResult(false, false, false, false, "Central Directory 偏移异常");
+            }
+
+            if (centralDirOffset < 24) {
+                return new SigningBlockParseResult(true, false, false, false, "未发现 APK Signing Block");
+            }
+
+            long footerOffset = centralDirOffset - 24;
+            byte[] footer = new byte[24];
+            raf.seek(footerOffset);
+            raf.readFully(footer);
+
+            long magicLow = getUInt64LE(footer, 8);
+            long magicHigh = getUInt64LE(footer, 16);
+            if (magicLow != APK_SIG_BLOCK_MAGIC_LOW || magicHigh != APK_SIG_BLOCK_MAGIC_HIGH) {
+                return new SigningBlockParseResult(true, false, false, false, "未发现 APK Signing Block");
+            }
+
+            long blockSize = getUInt64LE(footer, 0);
+            long totalBlockSize = blockSize + 8;
+            if (blockSize < 24 || totalBlockSize <= 0) {
+                return new SigningBlockParseResult(false, false, false, false, "Signing Block 长度非法");
+            }
+            if (totalBlockSize > MAX_SIGNING_BLOCK_BYTES) {
+                return new SigningBlockParseResult(false, false, false, false, "Signing Block 过大，跳过解析");
+            }
+
+            long blockStart = centralDirOffset - totalBlockSize;
+            if (blockStart < 0) {
+                return new SigningBlockParseResult(false, false, false, false, "Signing Block 起始偏移非法");
+            }
+
+            byte[] block = new byte[(int) totalBlockSize];
+            raf.seek(blockStart);
+            raf.readFully(block);
+
+            long firstSize = getUInt64LE(block, 0);
+            if (firstSize != blockSize) {
+                return new SigningBlockParseResult(false, false, false, false, "Signing Block 前后长度不一致");
+            }
+
+            boolean hasV2 = false;
+            boolean hasV3 = false;
+            int cursor = 8;
+            int entriesEnd = block.length - 24;
+            while (cursor < entriesEnd) {
+                long entryLen = getUInt64LE(block, cursor);
+                cursor += 8;
+                if (entryLen < 4 || entryLen > Integer.MAX_VALUE) {
+                    return new SigningBlockParseResult(false, true, false, false, "Signing Block entry 长度异常");
+                }
+                if (cursor + entryLen > entriesEnd) {
+                    return new SigningBlockParseResult(false, true, false, false, "Signing Block entry 越界");
+                }
+
+                int id = (int) getUInt32LE(block, cursor);
+                if (id == APK_SIG_SCHEME_V2_BLOCK_ID) {
+                    hasV2 = true;
+                } else if (id == APK_SIG_SCHEME_V3_BLOCK_ID || id == APK_SIG_SCHEME_V31_BLOCK_ID) {
+                    hasV3 = true;
+                }
+                cursor += (int) entryLen;
+            }
+            return new SigningBlockParseResult(true, true, hasV2, hasV3, "Signing Block 解析完成");
+        } catch (Exception e) {
+            return new SigningBlockParseResult(false, false, false, false, e.getClass().getSimpleName());
+        }
+    }
+
+    private long findEocdOffset(RandomAccessFile raf, long fileSize) throws IOException {
+        int scanSize = (int) Math.min(fileSize, ZIP_EOCD_MAX_SEARCH);
+        byte[] tail = new byte[scanSize];
+        long tailStart = fileSize - scanSize;
+        raf.seek(tailStart);
+        raf.readFully(tail);
+
+        for (int i = tail.length - ZIP_EOCD_MIN_SIZE; i >= 0; i--) {
+            if ((int) getUInt32LE(tail, i) == ZIP_EOCD_MAGIC) {
+                return tailStart + i;
+            }
+        }
+        return -1;
+    }
+
+    private long readUInt32LE(RandomAccessFile raf, long offset) throws IOException {
+        byte[] buf = new byte[4];
+        raf.seek(offset);
+        raf.readFully(buf);
+        return getUInt32LE(buf, 0);
+    }
+
+    private long getUInt32LE(byte[] src, int offset) {
+        return ((long) src[offset] & 0xFF)
+            | (((long) src[offset + 1] & 0xFF) << 8)
+            | (((long) src[offset + 2] & 0xFF) << 16)
+            | (((long) src[offset + 3] & 0xFF) << 24);
+    }
+
+    private long getUInt64LE(byte[] src, int offset) {
+        return ((long) src[offset] & 0xFF)
+            | (((long) src[offset + 1] & 0xFF) << 8)
+            | (((long) src[offset + 2] & 0xFF) << 16)
+            | (((long) src[offset + 3] & 0xFF) << 24)
+            | (((long) src[offset + 4] & 0xFF) << 32)
+            | (((long) src[offset + 5] & 0xFF) << 40)
+            | (((long) src[offset + 6] & 0xFF) << 48)
+            | (((long) src[offset + 7] & 0xFF) << 56);
+    }
+
+    private void addSignatureSamples(
+            List<Map.Entry<String, String>> items,
+            String label,
+            List<SignatureDetectionResult> bucket,
+            int maxSamples,
+            boolean highRisk
+    ) {
+        int shown = 0;
+        for (SignatureDetectionResult result : bucket) {
+            if (shown++ >= maxSamples) break;
+            String value = "置信度:" + result.detectionConfidence
+                + " | " + result.detectionNote
+                + " | V4:" + (result.hasV4Block == null ? "unknown" : result.hasV4Block);
+            CollectorUtils.add(items, label, (highRisk ? "[HIGH]" : "") + result.packageName + " -> " + value);
+        }
+    }
 
     private boolean isDangerousPerm(String perm) {
         String[] dangerous = {
