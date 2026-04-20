@@ -2,6 +2,7 @@ package com.ucas.infocollect;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.widget.Toast;
 
@@ -21,16 +22,6 @@ import java.util.List;
 public class MainActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST_CODE = 100;
-
-    private static final String[] DANGEROUS_PERMISSIONS = {
-        Manifest.permission.READ_PHONE_STATE,
-        Manifest.permission.GET_ACCOUNTS,
-        Manifest.permission.READ_CONTACTS,
-        Manifest.permission.READ_CALL_LOG,
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.READ_EXTERNAL_STORAGE,
-    };
 
     private static final String[] TAB_TITLES = {
         "设备", "应用", "传感器★", "网络", "用户", "安全分析"
@@ -58,8 +49,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void requestMissingPermissions() {
+        List<String> dangerousPermissions = buildDangerousPermissions();
         List<String> missing = new ArrayList<>();
-        for (String perm : DANGEROUS_PERMISSIONS) {
+        for (String perm : dangerousPermissions) {
             if (ContextCompat.checkSelfPermission(this, perm)
                     != PackageManager.PERMISSION_GRANTED) {
                 missing.add(perm);
@@ -69,6 +61,24 @@ public class MainActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(
                 this, missing.toArray(new String[0]), PERMISSION_REQUEST_CODE);
         }
+    }
+
+    private List<String> buildDangerousPermissions() {
+        List<String> permList = new ArrayList<>();
+        permList.add(Manifest.permission.READ_PHONE_STATE);
+        permList.add(Manifest.permission.GET_ACCOUNTS);
+        permList.add(Manifest.permission.READ_CONTACTS);
+        permList.add(Manifest.permission.READ_CALL_LOG);
+        permList.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        permList.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permList.add(Manifest.permission.READ_MEDIA_IMAGES);
+            permList.add(Manifest.permission.READ_MEDIA_VIDEO);
+        } else {
+            permList.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+        return permList;
     }
 
     @Override
