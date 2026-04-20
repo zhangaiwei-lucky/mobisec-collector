@@ -88,6 +88,8 @@ public abstract class BaseInfoFragment extends Fragment {
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        mainHandler.removeCallbacksAndMessages(null);
+        executor.shutdownNow();
         progressBar = null;
         btnRefresh = null;
     }
