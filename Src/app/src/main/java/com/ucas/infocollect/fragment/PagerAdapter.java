@@ -17,27 +17,49 @@ public class PagerAdapter extends FragmentStateAdapter {
         Fragment create();
     }
 
-    private final List<FragmentFactory> fragmentFactories;
+    public static class TabSpec {
+        private final String title;
+        private final FragmentFactory fragmentFactory;
+
+        public TabSpec(@NonNull String title, @NonNull FragmentFactory fragmentFactory) {
+            this.title = title;
+            this.fragmentFactory = fragmentFactory;
+        }
+
+        public String getTitle() {
+            return title;
+        }
+
+        public FragmentFactory getFragmentFactory() {
+            return fragmentFactory;
+        }
+    }
+
+    private final List<TabSpec> tabSpecs;
 
     public PagerAdapter(
             @NonNull FragmentActivity activity,
-            @NonNull List<FragmentFactory> fragmentFactories
+            @NonNull List<TabSpec> tabSpecs
     ) {
         super(activity);
-        if (fragmentFactories.isEmpty()) {
-            throw new IllegalArgumentException("fragmentFactories must not be empty");
+        if (tabSpecs.isEmpty()) {
+            throw new IllegalArgumentException("tabSpecs must not be empty");
         }
-        this.fragmentFactories = new ArrayList<>(fragmentFactories);
+        this.tabSpecs = new ArrayList<>(tabSpecs);
+    }
+
+    public String getTabTitle(int position) {
+        return tabSpecs.get(position).getTitle();
     }
 
     @NonNull
     @Override
     public Fragment createFragment(int position) {
-        return fragmentFactories.get(position).create();
+        return tabSpecs.get(position).getFragmentFactory().create();
     }
 
     @Override
     public int getItemCount() {
-        return fragmentFactories.size();
+        return tabSpecs.size();
     }
 }

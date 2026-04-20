@@ -1,7 +1,6 @@
 package com.ucas.infocollect.fragment;
 
 import android.content.Context;
-import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -18,6 +17,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
 import com.ucas.infocollect.R;
@@ -191,11 +191,22 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         double total = var[0] + var[1] + var[2];
 
         String activity; int color;
-        if      (total < 0.05) { activity = "静止（桌面放置）";    color = 0xFF2196F3; }
-        else if (total < 0.5)  { activity = "轻微移动（手持待机）"; color = 0xFF4CAF50; }
-        else if (total < 3.0)  { activity = "步行";               color = 0xFFFF9800; }
-        else if (total < 10.0) { activity = "快走/慢跑";           color = 0xFFFF5722; }
-        else                   { activity = "奔跑/乘车";           color = 0xFFF44336; }
+        if (total < 0.05) {
+            activity = "静止（桌面放置）";
+            color = ContextCompat.getColor(requireContext(), R.color.sensor_activity_static);
+        } else if (total < 0.5) {
+            activity = "轻微移动（手持待机）";
+            color = ContextCompat.getColor(requireContext(), R.color.sensor_activity_idle_move);
+        } else if (total < 3.0) {
+            activity = "步行";
+            color = ContextCompat.getColor(requireContext(), R.color.sensor_activity_walk);
+        } else if (total < 10.0) {
+            activity = "快走/慢跑";
+            color = ContextCompat.getColor(requireContext(), R.color.sensor_activity_jog);
+        } else {
+            activity = "奔跑/乘车";
+            color = ContextCompat.getColor(requireContext(), R.color.sensor_activity_fast_move);
+        }
 
         tvActivity.setTextColor(color);
         tvActivity.setText(String.format(Locale.getDefault(),
@@ -232,7 +243,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         }
         sb.append("\n⚠ 无需任何权限 · 跨 Factory Reset 持续有效");
 
-        tvFingerprint.setTextColor(Color.parseColor("#D32F2F"));
+        tvFingerprint.setTextColor(ContextCompat.getColor(requireContext(), R.color.risk_high_text));
         tvFingerprint.setText(sb.toString());
     }
 

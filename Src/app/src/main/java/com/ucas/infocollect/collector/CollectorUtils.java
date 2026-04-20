@@ -7,6 +7,7 @@ import java.util.Map;
 public final class CollectorUtils {
 
     public static final String HEADER_PREFIX = "##";
+    public static final String HIGH_RISK_PREFIX = "[HIGH]";
 
     private CollectorUtils() {
         // Utility class

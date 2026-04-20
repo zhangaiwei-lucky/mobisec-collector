@@ -99,8 +99,8 @@ public class NetworkCollector implements InfoCollector {
                 .getSystemService(Context.WIFI_SERVICE);
             WifiInfo wi = wm.getConnectionInfo();
             if (wi != null) {
-                CollectorUtils.add(items, "SSID",    "[HIGH]" + wi.getSSID());
-                CollectorUtils.add(items, "BSSID",   "[HIGH]" + wi.getBSSID());  // 可定位 AP 位置
+                CollectorUtils.add(items, "SSID",    CollectorUtils.HIGH_RISK_PREFIX + wi.getSSID());
+                CollectorUtils.add(items, "BSSID",   CollectorUtils.HIGH_RISK_PREFIX + wi.getBSSID());  // 可定位 AP 位置
                 CollectorUtils.add(items, "MAC 地址", wi.getMacAddress());
                 CollectorUtils.add(items, "信号强度", wi.getRssi() + " dBm");
                 CollectorUtils.add(items, "链接速度", wi.getLinkSpeed() + " Mbps");
@@ -124,7 +124,7 @@ public class NetworkCollector implements InfoCollector {
             if (scanResults != null) {
                 for (ScanResult sr : scanResults) {
                     CollectorUtils.add(items, sr.SSID,
-                        "[HIGH]BSSID:" + sr.BSSID + " 信号:" + sr.level + "dBm");
+                        CollectorUtils.HIGH_RISK_PREFIX + "BSSID:" + sr.BSSID + " 信号:" + sr.level + "dBm");
                 }
             }
         } else {
@@ -153,7 +153,8 @@ public class NetworkCollector implements InfoCollector {
                     String mac = parts[3];
                     String iface = parts.length >= 6 ? parts[5] : "?";
                     if (!mac.equals("00:00:00:00:00:00")) {
-                        CollectorUtils.add(items, ip + " [" + iface + "]", "[HIGH]MAC: " + mac);
+                        CollectorUtils.add(items, ip + " [" + iface + "]",
+                            CollectorUtils.HIGH_RISK_PREFIX + "MAC: " + mac);
                     }
                 }
             }

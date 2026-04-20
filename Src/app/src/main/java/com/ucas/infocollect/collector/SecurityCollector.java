@@ -59,6 +59,11 @@ import java.util.zip.ZipFile;
 public class SecurityCollector implements InfoCollector {
 
     private static final int MAX_SIGNATURE_SAMPLE = 5;
+    private static final int MAX_EXPORTED_COMPONENT_SAMPLE = 5;
+    private static final int MAX_PROVIDER_SAMPLE = 5;
+    private static final int MAX_OVER_PRIVILEGED_TOP = 10;
+    private static final int MAX_CLEARTEXT_APP_SAMPLE = 10;
+    private static final int MAX_PROCESS_SAMPLE = 15;
     private static final long MAX_SIGNING_BLOCK_BYTES = 8L * 1024L * 1024L; // 8 MB
     private static final int ZIP_EOCD_MIN_SIZE = 22;
     private static final int ZIP_EOCD_MAX_SEARCH = 65535 + ZIP_EOCD_MIN_SIZE;
@@ -178,7 +183,7 @@ public class SecurityCollector implements InfoCollector {
             boolean enforcing = enforceFile.trim().equals("1");
             CollectorUtils.add(items, "SELinux 模式",
                 enforcing ? "Enforcing（强制）✓ MAC 策略生效"
-                          : "[HIGH]Permissive（宽松）— MAC 策略不生效，提权风险高");
+                          : CollectorUtils.HIGH_RISK_PREFIX + "Permissive（宽松）— MAC 策略不生效，提权风险高");
         }
 
         // 方法2：读取 /proc/sys/kernel/perf_event_paranoid（内核安全参数）
@@ -186,7 +191,7 @@ public class SecurityCollector implements InfoCollector {
         if (!paranoid.isEmpty()) {
             int val = parseIntSafe(paranoid.trim());
             CollectorUtils.add(items, "perf_event 偏执级别",
-                val + (val >= 2 ? "（安全）" : "[HIGH]（< 2，侧信道泄露风险）"));
+                val + (val >= 2 ? "（安全）" : CollectorUtils.HIGH_RISK_PREFIX + "（< 2，侧信道泄露风险）"));
         }
 
         // 方法3：通过 Java 反射获取 SELinux 状态
@@ -198,7 +203,7 @@ public class SecurityCollector implements InfoCollector {
             boolean enforced = (Boolean) isSELinuxEnforced.invoke(null);
             CollectorUtils.add(items, "SELinux 已启用", String.valueOf(enabled));
             CollectorUtils.add(items, "SELinux 已强制",
-                enforced ? "是" : "[HIGH]否（Permissive 模式，等同无 MAC）");
+                enforced ? "是" : CollectorUtils.HIGH_RISK_PREFIX + "否（Permissive 模式，等同无 MAC）");
         } catch (Exception e) {
             CollectorUtils.add(items, "SELinux 反射读取", "不支持: " + e.getMessage());
         }
@@ -210,7 +215,7 @@ public class SecurityCollector implements InfoCollector {
             CollectorUtils.add(items, "ASLR 级别",
                 val + (val == 2 ? "（完全随机化 ✓）"
                      : val == 1 ? "（部分随机化）"
-                     : "[HIGH]（已禁用，ROP/ret2libc 攻击更易实施）"));
+                     : CollectorUtils.HIGH_RISK_PREFIX + "（已禁用，ROP/ret2libc 攻击更易实施）"));
         }
     }
 
@@ -242,7 +247,7 @@ public class SecurityCollector implements InfoCollector {
             } else if (readable) {
                 // 可读则尝试读前 100 字符
                 String preview = readFilePreview(f[0], 80);
-                status = "[HIGH]可读！内容: " + (preview.isEmpty() ? "(空)" : preview);
+                status = CollectorUtils.HIGH_RISK_PREFIX + "可读！内容: " + (preview.isEmpty() ? "(空)" : preview);
             } else {
                 status = "存在但无读权限（需 root）";
             }
@@ -313,13 +318,13 @@ public class SecurityCollector implements InfoCollector {
         CollectorUtils.add(items, "用户App导出Service数",   String.valueOf(exportedService));
         CollectorUtils.add(items, "用户App导出Receiver数",  String.valueOf(exportedReceiver));
         CollectorUtils.add(items, "无权限保护的导出组件",
-            highRisk.isEmpty() ? "无" : "[HIGH]" + highRisk.size() + " 个");
+            highRisk.isEmpty() ? "无" : CollectorUtils.HIGH_RISK_PREFIX + highRisk.size() + " 个");
 
         // 展示前 5 个高风险无权限导出组件
         int shown = 0;
         for (String comp : highRisk) {
-            if (shown++ >= 5) break;
-            CollectorUtils.add(items, "高风险组件", "[HIGH]" + comp);
+            if (shown++ >= MAX_EXPORTED_COMPONENT_SAMPLE) break;
+            CollectorUtils.add(items, "高风险组件", CollectorUtils.HIGH_RISK_PREFIX + comp);
         }
     }
 
@@ -357,14 +362,14 @@ public class SecurityCollector implements InfoCollector {
 
         CollectorUtils.add(items, "导出 ContentProvider 总数", String.valueOf(total));
         CollectorUtils.add(items, "无权限保护的用户 ContentProvider",
-            riskyProviders.isEmpty() ? "无" : "[HIGH]" + riskyProviders.size() + " 个");
+            riskyProviders.isEmpty() ? "无" : CollectorUtils.HIGH_RISK_PREFIX + riskyProviders.size() + " 个");
         CollectorUtils.add(items, "路径遍历攻击说明",
             "通过 content://authority/../../../data/data/target/file 可能读取其他 App 文件");
 
         int shown = 0;
         for (String p : riskyProviders) {
-            if (shown++ >= 5) break;
-            CollectorUtils.add(items, "高风险 Provider", "[HIGH]" + p);
+            if (shown++ >= MAX_PROVIDER_SAMPLE) break;
+            CollectorUtils.add(items, "高风险 Provider", CollectorUtils.HIGH_RISK_PREFIX + p);
         }
     }
 
@@ -385,7 +390,7 @@ public class SecurityCollector implements InfoCollector {
             "以下结果用于风险提示与初筛，不是完整 APK 签名法证审计结论");
         CollectorUtils.add(items, "当前系统 API", String.valueOf(Build.VERSION.SDK_INT));
         CollectorUtils.add(items, "Janus 影响范围", Build.VERSION.SDK_INT <= 26
-            ? "[HIGH]当前系统在受影响范围内（API ≤ 26）"
+            ? CollectorUtils.HIGH_RISK_PREFIX + "当前系统在受影响范围内（API ≤ 26）"
             : "当前系统不在典型受影响范围（API > 26）");
 
         // 仅扫描用户应用，避免系统应用噪声
@@ -424,7 +429,7 @@ public class SecurityCollector implements InfoCollector {
             modernSigned.isEmpty() ? "0" : modernSigned.size() + " 个");
         CollectorUtils.add(items, "可能 V1-only（中/低置信度）",
             possibleV1Only.isEmpty() ? "0"
-                : "[HIGH]" + possibleV1Only.size() + " 个（需进一步离线审计确认）");
+                : CollectorUtils.HIGH_RISK_PREFIX + possibleV1Only.size() + " 个（需进一步离线审计确认）");
         CollectorUtils.add(items, "无法判断（解析失败或读取受限）",
             undetermined.isEmpty() ? "0" : undetermined.size() + " 个");
 
@@ -465,11 +470,11 @@ public class SecurityCollector implements InfoCollector {
         permCounts.sort((a, b) -> b.getValue() - a.getValue());
 
         CollectorUtils.add(items, "声明危险权限的用户应用数", String.valueOf(permCounts.size()));
-        int top = Math.min(permCounts.size(), 10);
+        int top = Math.min(permCounts.size(), MAX_OVER_PRIVILEGED_TOP);
         for (int i = 0; i < top; i++) {
             Map.Entry<String, Integer> e = permCounts.get(i);
             CollectorUtils.add(items, "#" + (i + 1) + " " + e.getKey(),
-                "[HIGH]声明了 " + e.getValue() + " 项危险权限");
+                CollectorUtils.HIGH_RISK_PREFIX + "声明了 " + e.getValue() + " 项危险权限");
         }
     }
 
@@ -501,11 +506,11 @@ public class SecurityCollector implements InfoCollector {
 
         CollectorUtils.add(items, "允许明文 HTTP 的用户应用",
             cleartextApps.isEmpty() ? "无（全部强制 HTTPS）"
-                : "[HIGH]" + cleartextApps.size() + " 个（存在 MITM 风险）");
+                : CollectorUtils.HIGH_RISK_PREFIX + cleartextApps.size() + " 个（存在 MITM 风险）");
         int shown = 0;
         for (String app : cleartextApps) {
-            if (shown++ >= 10) break;
-            CollectorUtils.add(items, "明文 HTTP 应用", "[HIGH]" + app);
+            if (shown++ >= MAX_CLEARTEXT_APP_SAMPLE) break;
+            CollectorUtils.add(items, "明文 HTTP 应用", CollectorUtils.HIGH_RISK_PREFIX + app);
         }
     }
 
@@ -550,7 +555,7 @@ public class SecurityCollector implements InfoCollector {
             }
 
             // 展示前 15 个进程名
-            if (shown < 15) {
+            if (shown < MAX_PROCESS_SAMPLE) {
                 CollectorUtils.add(items, "PID " + pidDir.getName(), cmdline);
                 shown++;
             }
@@ -558,7 +563,7 @@ public class SecurityCollector implements InfoCollector {
 
         if (!suspicious.isEmpty()) {
             for (String s : suspicious) {
-                CollectorUtils.add(items, "⚠ 可疑进程", "[HIGH]" + s);
+                CollectorUtils.add(items, "⚠ 可疑进程", CollectorUtils.HIGH_RISK_PREFIX + s);
             }
         } else {
             CollectorUtils.add(items, "可疑进程", "未检测到已知挖矿/Root工具进程");
@@ -776,7 +781,8 @@ public class SecurityCollector implements InfoCollector {
             String value = "置信度:" + result.detectionConfidence
                 + " | " + result.detectionNote
                 + " | V4:" + (result.hasV4Block == null ? "unknown" : result.hasV4Block);
-            CollectorUtils.add(items, label, (highRisk ? "[HIGH]" : "") + result.packageName + " -> " + value);
+            CollectorUtils.add(items, label,
+                (highRisk ? CollectorUtils.HIGH_RISK_PREFIX : "") + result.packageName + " -> " + value);
         }
     }
 

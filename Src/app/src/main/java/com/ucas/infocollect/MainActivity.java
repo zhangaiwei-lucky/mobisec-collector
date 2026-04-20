@@ -23,16 +23,11 @@ import com.ucas.infocollect.fragment.SensorFragment;
 import com.ucas.infocollect.fragment.UserFragment;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST_CODE = 100;
-
-    private static final String[] TAB_TITLES = {
-        "设备", "应用", "传感器★", "网络", "用户", "安全分析"
-    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,25 +37,29 @@ public class MainActivity extends AppCompatActivity {
         ViewPager2 viewPager = findViewById(R.id.view_pager);
         TabLayout tabLayout = findViewById(R.id.tab_layout);
 
-        List<PagerAdapter.FragmentFactory> fragmentFactories = Arrays.asList(
-            DeviceFragment::new,
-            AppsFragment::new,
-            SensorFragment::new,
-            NetworkFragment::new,
-            UserFragment::new,
-            SecurityFragment::new
-        );
-        PagerAdapter adapter = new PagerAdapter(this, fragmentFactories);
+        List<PagerAdapter.TabSpec> tabSpecs = buildTabSpecs();
+        PagerAdapter adapter = new PagerAdapter(this, tabSpecs);
         viewPager.setAdapter(adapter);
         // 不设置 offscreenPageLimit，让 Fragment 按需创建
         // 这样 UserFragment 只在切换到该 tab 时才初始化，此时 app 已获得焦点
         // 传感器 Fragment 通过 onResume/onPause 自行管理注册状态
 
         new TabLayoutMediator(tabLayout, viewPager,
-            (tab, position) -> tab.setText(TAB_TITLES[position])
+            (tab, position) -> tab.setText(adapter.getTabTitle(position))
         ).attach();
 
         requestMissingPermissions();
+    }
+
+    private List<PagerAdapter.TabSpec> buildTabSpecs() {
+        List<PagerAdapter.TabSpec> tabSpecs = new ArrayList<>();
+        tabSpecs.add(new PagerAdapter.TabSpec("设备", DeviceFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("应用", AppsFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("传感器★", SensorFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("网络", NetworkFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("用户", UserFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("安全分析", SecurityFragment::new));
+        return tabSpecs;
     }
 
     private void requestMissingPermissions() {

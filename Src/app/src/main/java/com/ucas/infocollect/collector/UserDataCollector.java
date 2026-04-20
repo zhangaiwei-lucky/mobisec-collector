@@ -33,6 +33,9 @@ import java.util.TimeZone;
  */
 public class UserDataCollector implements InfoCollector {
 
+    private static final int MAX_CONTACT_DISPLAY = 10;
+    private static final int MAX_CALL_LOG_DISPLAY = 10;
+
     @Override
     public List<Map.Entry<String, String>> collect(Context context) {
         List<Map.Entry<String, String>> items = new ArrayList<>();
@@ -96,9 +99,9 @@ public class UserDataCollector implements InfoCollector {
             ClipData.Item item = clip.getItemAt(0);
             CharSequence text = item.getText();
             if (text != null && text.length() > 0) {
-                CollectorUtils.add(items, "剪贴板文本", "[HIGH]" + text);
+                CollectorUtils.add(items, "剪贴板文本", CollectorUtils.HIGH_RISK_PREFIX + text);
             } else if (item.getUri() != null) {
-                CollectorUtils.add(items, "剪贴板 URI", "[HIGH]" + item.getUri().toString());
+                CollectorUtils.add(items, "剪贴板 URI", CollectorUtils.HIGH_RISK_PREFIX + item.getUri().toString());
             } else {
                 CollectorUtils.add(items, "剪贴板", "含内容但非文本/URI 类型");
             }
@@ -122,7 +125,8 @@ public class UserDataCollector implements InfoCollector {
             }
             // isDeviceSecure：是否设置了 PIN/图案/密码（API 23+）
             boolean isSecure = km.isDeviceSecure();
-            CollectorUtils.add(items, "是否设置锁屏密码", isSecure ? "[HIGH]是（设备受保护）" : "否（无锁屏）");
+            CollectorUtils.add(items, "是否设置锁屏密码",
+                isSecure ? CollectorUtils.HIGH_RISK_PREFIX + "是（设备受保护）" : "否（无锁屏）");
 
             // isKeyguardLocked：当前是否处于锁屏状态
             boolean isLocked = km.isKeyguardLocked();
@@ -147,7 +151,7 @@ public class UserDataCollector implements InfoCollector {
             int adb = Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, -1);
             if (adb == -1) adb = Settings.Secure.getInt(cr, "adb_enabled", 0);
             CollectorUtils.add(items, "ADB 调试",
-                adb == 1 ? "[HIGH]已开启（USB 可直接提取数据）" : "关闭");
+                adb == 1 ? CollectorUtils.HIGH_RISK_PREFIX + "已开启（USB 可直接提取数据）" : "关闭");
 
             // 开发者选项：先读 Global，MIUI/ColorOS 等 ROM 可能存在 Secure 里
             int dev = Settings.Global.getInt(cr,
@@ -162,7 +166,7 @@ public class UserDataCollector implements InfoCollector {
             // 如果 ADB 已开，开发者模式必然开启
             if (adb == 1) dev = 1;
             CollectorUtils.add(items, "开发者选项",
-                dev == 1 ? "[HIGH]已开启" : "关闭");
+                dev == 1 ? CollectorUtils.HIGH_RISK_PREFIX + "已开启" : "关闭");
 
         } catch (Exception e) {
             CollectorUtils.add(items, "开发者/ADB 状态读取失败", e.getMessage());
@@ -186,7 +190,7 @@ public class UserDataCollector implements InfoCollector {
             } else {
                 CollectorUtils.add(items, "账户总数", String.valueOf(accounts.length));
                 for (Account acc : accounts) {
-                    CollectorUtils.add(items, acc.name, "[HIGH]类型: " + acc.type);
+                    CollectorUtils.add(items, acc.name, CollectorUtils.HIGH_RISK_PREFIX + "类型: " + acc.type);
                 }
             }
         } catch (Exception e) {
@@ -212,11 +216,11 @@ public class UserDataCollector implements InfoCollector {
             }
             CollectorUtils.add(items, "联系人总数", String.valueOf(cursor.getCount()));
             int count = 0;
-            while (cursor.moveToNext() && count++ < 10) {
+            while (cursor.moveToNext() && count++ < MAX_CONTACT_DISPLAY) {
                 String name   = cursor.getString(0);
                 String number = cursor.getString(1);
                 CollectorUtils.add(items, name != null ? name : "(无名称)",
-                    "[HIGH]" + (number != null ? number : "无号码"));
+                    CollectorUtils.HIGH_RISK_PREFIX + (number != null ? number : "无号码"));
             }
             cursor.close();
         } catch (Exception e) {
@@ -245,7 +249,7 @@ public class UserDataCollector implements InfoCollector {
             CollectorUtils.add(items, "通话记录总数", String.valueOf(cursor.getCount()));
             SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
             int count = 0;
-            while (cursor.moveToNext() && count++ < 10) {
+            while (cursor.moveToNext() && count++ < MAX_CALL_LOG_DISPLAY) {
                 String name   = cursor.getString(0);
                 String number = cursor.getString(1);
                 int    type   = cursor.getInt(2);
@@ -255,7 +259,7 @@ public class UserDataCollector implements InfoCollector {
                                  type == CallLog.Calls.OUTGOING_TYPE ? "呼出" : "未接";
                 String label = (name != null && !name.isEmpty()) ? name : number;
                 CollectorUtils.add(items, label + " [" + typeStr + "]",
-                    "[HIGH]" + sdf.format(new Date(date)) + " 时长:" + dur + "s");
+                    CollectorUtils.HIGH_RISK_PREFIX + sdf.format(new Date(date)) + " 时长:" + dur + "s");
             }
             cursor.close();
         } catch (Exception e) {
@@ -283,7 +287,7 @@ public class UserDataCollector implements InfoCollector {
             } else {
                 installUnknown = Settings.Secure.getInt(cr,
                     Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
-                    ? "[HIGH]已允许" : "不允许";
+                    ? CollectorUtils.HIGH_RISK_PREFIX + "已允许" : "不允许";
             }
             CollectorUtils.add(items, "安装未知来源 App", installUnknown);
         } catch (Exception e) {

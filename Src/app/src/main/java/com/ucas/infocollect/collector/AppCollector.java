@@ -20,6 +20,9 @@ import java.util.Map;
  */
 public class AppCollector implements InfoCollector {
 
+    private static final int MAX_USER_APP_DISPLAY = 30;
+    private static final int MAX_USAGE_STATS_DISPLAY = 20;
+
     private static final String[] SENSITIVE_PERMISSIONS = {
         "READ_CONTACTS", "READ_CALL_LOG", "READ_SMS", "SEND_SMS",
         "ACCESS_FINE_LOCATION", "RECORD_AUDIO", "CAMERA",
@@ -79,7 +82,8 @@ public class AppCollector implements InfoCollector {
         CollectorUtils.add(items, "系统应用数量",   String.valueOf(sysApps));
         CollectorUtils.add(items, "持有高危权限的应用", String.valueOf(highPermApps));
         CollectorUtils.add(items, "检测到的安全/分析工具",
-            securityTools.isEmpty() ? "无" : "[HIGH]" + String.join(", ", securityTools));
+            securityTools.isEmpty() ? "无"
+                : CollectorUtils.HIGH_RISK_PREFIX + String.join(", ", securityTools));
 
         // ── 用户应用详情（最多30条）─────────────────────────────
         CollectorUtils.addHeader(items, "用户安装应用（权限分析）");
@@ -87,8 +91,8 @@ public class AppCollector implements InfoCollector {
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             if (isSys) continue;
-            if (count++ >= 30) {
-                CollectorUtils.add(items, "...", "还有更多应用（仅展示前30条）");
+            if (count++ >= MAX_USER_APP_DISPLAY) {
+                CollectorUtils.add(items, "...", "还有更多应用（仅展示前" + MAX_USER_APP_DISPLAY + "条）");
                 break;
             }
 
@@ -108,7 +112,7 @@ public class AppCollector implements InfoCollector {
 
             String val = "v" + (pkg.versionName != null ? pkg.versionName : "?");
             if (perms.length() > 0)
-                val += "\n[HIGH]危险权限: " + perms.toString().trim();
+                val += "\n" + CollectorUtils.HIGH_RISK_PREFIX + "危险权限: " + perms.toString().trim();
             CollectorUtils.add(items, label + "\n" + pkg.packageName, val);
         }
 
@@ -150,11 +154,11 @@ public class AppCollector implements InfoCollector {
             CollectorUtils.add(items, "有记录的应用数", String.valueOf(filtered.size()));
 
             SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
-            int limit = Math.min(filtered.size(), 20);
+            int limit = Math.min(filtered.size(), MAX_USAGE_STATS_DISPLAY);
             for (int i = 0; i < limit; i++) {
                 UsageStats s = filtered.get(i);
                 CollectorUtils.add(items, s.getPackageName(),
-                    "[HIGH]使用 " + formatDuration(s.getTotalTimeInForeground())
+                    CollectorUtils.HIGH_RISK_PREFIX + "使用 " + formatDuration(s.getTotalTimeInForeground())
                     + " | 最后: " + sdf.format(new Date(s.getLastTimeUsed())));
             }
         } catch (Exception e) {

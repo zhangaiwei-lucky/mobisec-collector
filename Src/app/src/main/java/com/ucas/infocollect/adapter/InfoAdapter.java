@@ -1,12 +1,12 @@
 package com.ucas.infocollect.adapter;
 
-import android.graphics.Color;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -72,11 +72,11 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             h.key.setText(entry.getKey());
             h.value.setText(entry.getValue());
             // 高敏感度信息用红色标注
-            if (entry.getValue().startsWith("[HIGH]")) {
-                h.value.setTextColor(Color.parseColor("#D32F2F"));
-                h.value.setText(entry.getValue().substring(6));
+            if (entry.getValue().startsWith(CollectorUtils.HIGH_RISK_PREFIX)) {
+                h.value.setTextColor(ContextCompat.getColor(h.value.getContext(), R.color.risk_high_text));
+                h.value.setText(entry.getValue().substring(CollectorUtils.HIGH_RISK_PREFIX.length()));
             } else {
-                h.value.setTextColor(Color.parseColor("#333333"));
+                h.value.setTextColor(ContextCompat.getColor(h.value.getContext(), R.color.info_text_primary));
             }
         }
     }

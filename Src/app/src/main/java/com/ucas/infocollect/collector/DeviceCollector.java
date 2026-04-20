@@ -63,7 +63,7 @@ public class DeviceCollector implements InfoCollector {
         @SuppressLint("HardwareIds")
         String androidId = Settings.Secure.getString(
             context.getContentResolver(), Settings.Secure.ANDROID_ID);
-        CollectorUtils.add(items, "Android ID", "[HIGH]" + androidId);  // 设备唯一 ID，可追踪用户
+        CollectorUtils.add(items, "Android ID", CollectorUtils.HIGH_RISK_PREFIX + androidId);  // 设备唯一 ID，可追踪用户
 
         // IMEI（需 READ_PHONE_STATE 权限）
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
@@ -73,11 +73,11 @@ public class DeviceCollector implements InfoCollector {
                     (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     String imei = tm.getImei();
-                    CollectorUtils.add(items, "IMEI", "[HIGH]" + (imei != null ? imei : "不可用"));
+                    CollectorUtils.add(items, "IMEI", CollectorUtils.HIGH_RISK_PREFIX + (imei != null ? imei : "不可用"));
                 }
                 CollectorUtils.add(items, "运营商",       tm.getNetworkOperatorName());
                 CollectorUtils.add(items, "SIM 国家代码", tm.getSimCountryIso().toUpperCase());
-                CollectorUtils.add(items, "电话号码",     "[HIGH]" + tm.getLine1Number());
+                CollectorUtils.add(items, "电话号码",     CollectorUtils.HIGH_RISK_PREFIX + tm.getLine1Number());
                 CollectorUtils.add(items, "设备 SoftwareVersion", tm.getDeviceSoftwareVersion());
             } catch (Exception e) {
                 CollectorUtils.add(items, "电话信息", "读取失败: " + e.getMessage());
@@ -126,19 +126,19 @@ public class DeviceCollector implements InfoCollector {
 
         // ── Root / 安全状态（无需权限）───────────────────────────
         CollectorUtils.addHeader(items, "安全状态");
-        CollectorUtils.add(items, "是否 Root",         isRooted() ? "[HIGH]是" : "否");
+        CollectorUtils.add(items, "是否 Root",         isRooted() ? CollectorUtils.HIGH_RISK_PREFIX + "是" : "否");
         CollectorUtils.add(items, "开发者选项",
             Settings.Global.getInt(context.getContentResolver(),
                 Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
-            ? "[HIGH]已开启" : "未开启");
+            ? CollectorUtils.HIGH_RISK_PREFIX + "已开启" : "未开启");
         CollectorUtils.add(items, "ADB 调试",
             Settings.Global.getInt(context.getContentResolver(),
                 Settings.Global.ADB_ENABLED, 0) == 1
-            ? "[HIGH]已开启" : "未开启");
+            ? CollectorUtils.HIGH_RISK_PREFIX + "已开启" : "未开启");
         CollectorUtils.add(items, "安装未知来源",
             Settings.Secure.getInt(context.getContentResolver(),
                 Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
-            ? "[HIGH]已允许" : "不允许");
+            ? CollectorUtils.HIGH_RISK_PREFIX + "已允许" : "不允许");
 
         return items;
     }
