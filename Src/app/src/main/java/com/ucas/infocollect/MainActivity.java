@@ -14,9 +14,16 @@ import androidx.viewpager2.widget.ViewPager2;
 
 import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
+import com.ucas.infocollect.fragment.AppsFragment;
+import com.ucas.infocollect.fragment.DeviceFragment;
+import com.ucas.infocollect.fragment.NetworkFragment;
 import com.ucas.infocollect.fragment.PagerAdapter;
+import com.ucas.infocollect.fragment.SecurityFragment;
+import com.ucas.infocollect.fragment.SensorFragment;
+import com.ucas.infocollect.fragment.UserFragment;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
@@ -35,7 +42,15 @@ public class MainActivity extends AppCompatActivity {
         ViewPager2 viewPager = findViewById(R.id.view_pager);
         TabLayout tabLayout = findViewById(R.id.tab_layout);
 
-        PagerAdapter adapter = new PagerAdapter(this);
+        List<PagerAdapter.FragmentFactory> fragmentFactories = Arrays.asList(
+            DeviceFragment::new,
+            AppsFragment::new,
+            SensorFragment::new,
+            NetworkFragment::new,
+            UserFragment::new,
+            SecurityFragment::new
+        );
+        PagerAdapter adapter = new PagerAdapter(this, fragmentFactories);
         viewPager.setAdapter(adapter);
         // 不设置 offscreenPageLimit，让 Fragment 按需创建
         // 这样 UserFragment 只在切换到该 tab 时才初始化，此时 app 已获得焦点
