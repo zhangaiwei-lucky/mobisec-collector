@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 通用信息列表 Fragment 基类
@@ -34,7 +36,15 @@ public abstract class BaseInfoFragment extends Fragment {
     private ProgressBar progressBar;
     private Button btnRefresh;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    /**
+     * 线程池与任务句柄绑定到 View 生命周期，避免 onDestroyView 后复用失效 executor。
+     */
+    @Nullable
+    private ExecutorService executor;
+    @Nullable
+    private Future<?> runningTask;
+    private final Object taskLock = new Object();
+    private volatile boolean viewActive = false;
     private boolean loaded = false;
 
     @Nullable
@@ -42,6 +52,8 @@ public abstract class BaseInfoFragment extends Fragment {
     public View onCreateView(@NonNull LayoutInflater inflater,
             @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_list, container, false);
+        viewActive = true;
+        ensureExecutor();
 
         RecyclerView recyclerView = view.findViewById(R.id.recycler_view);
         progressBar = view.findViewById(R.id.progress_loading);
@@ -61,36 +73,90 @@ public abstract class BaseInfoFragment extends Fragment {
 
     /** 在后台线程收集数据，完成后在主线程更新 UI */
     protected void loadData() {
-        if (progressBar == null) return;
+        if (!isViewUsable()) return;
+
+        synchronized (taskLock) {
+            if (runningTask != null && !runningTask.isDone()) {
+                return;
+            }
+        }
+
         progressBar.setVisibility(View.VISIBLE);
         btnRefresh.setEnabled(false);
 
-        executor.execute(() -> {
-            List<Map.Entry<String, String>> data;
-            try {
-                data = collectInfo();
-            } catch (Exception e) {
-                data = new java.util.ArrayList<>();
-                data.add(new java.util.AbstractMap.SimpleEntry<>("收集异常", e.getMessage()));
-            }
-            final List<Map.Entry<String, String>> result = data;
-            mainHandler.post(() -> {
-                adapter.updateData(result);
-                if (progressBar != null) progressBar.setVisibility(View.GONE);
-                if (btnRefresh != null) btnRefresh.setEnabled(true);
-                loaded = true;
+        ExecutorService activeExecutor = ensureExecutor();
+        if (activeExecutor == null) {
+            if (btnRefresh != null) btnRefresh.setEnabled(true);
+            if (progressBar != null) progressBar.setVisibility(View.GONE);
+            return;
+        }
+
+        try {
+            Future<?> task = activeExecutor.submit(() -> {
+                List<Map.Entry<String, String>> data;
+                try {
+                    data = collectInfo();
+                } catch (Exception e) {
+                    data = new java.util.ArrayList<>();
+                    data.add(new java.util.AbstractMap.SimpleEntry<>("收集异常", e.getMessage()));
+                }
+                final List<Map.Entry<String, String>> result = data;
+                mainHandler.post(() -> {
+                    synchronized (taskLock) {
+                        runningTask = null;
+                    }
+                    if (!isViewUsable()) return;
+                    adapter.updateData(result);
+                    progressBar.setVisibility(View.GONE);
+                    btnRefresh.setEnabled(true);
+                    loaded = true;
+                });
             });
-        });
+            synchronized (taskLock) {
+                runningTask = task;
+            }
+        } catch (RejectedExecutionException e) {
+            if (btnRefresh != null) btnRefresh.setEnabled(true);
+            if (progressBar != null) progressBar.setVisibility(View.GONE);
+        }
     }
 
     protected abstract List<Map.Entry<String, String>> collectInfo();
 
     @Override
     public void onDestroyView() {
+        viewActive = false;
         super.onDestroyView();
         mainHandler.removeCallbacksAndMessages(null);
-        executor.shutdownNow();
+        synchronized (taskLock) {
+            if (runningTask != null && !runningTask.isDone()) {
+                runningTask.cancel(true);
+            }
+            runningTask = null;
+        }
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
+        adapter = null;
         progressBar = null;
         btnRefresh = null;
+    }
+
+    @Nullable
+    private ExecutorService ensureExecutor() {
+        if (executor == null || executor.isShutdown() || executor.isTerminated()) {
+            executor = Executors.newSingleThreadExecutor();
+        }
+        return executor;
+    }
+
+    private boolean isViewUsable() {
+        return viewActive
+                && isAdded()
+                && getView() != null
+                && adapter != null
+                && progressBar != null
+                && btnRefresh != null;
     }
 }
