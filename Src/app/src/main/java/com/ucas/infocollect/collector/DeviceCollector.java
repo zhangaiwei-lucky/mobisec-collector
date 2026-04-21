@@ -70,21 +70,35 @@ public class DeviceCollector implements InfoCollector {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
                 == PackageManager.PERMISSION_GRANTED) {
             try {
-                TelephonyManager tm =
-                    (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                TelephonyManager tm = CollectorUtils.safeService(
+                    context,
+                    Context.TELEPHONY_SERVICE,
+                    TelephonyManager.class,
+                    items,
+                    "电话服务",
+                    "TelephonyManager 不可用");
+                if (tm == null) {
+                    CollectorUtils.addDegrade(items, "电话信息",
+                        CollectorUtils.DegradeReason.SERVICE_UNAVAILABLE, "无法读取 IMEI/运营商信息");
+                } else {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     String imei = tm.getImei();
-                    CollectorUtils.add(items, "IMEI", CollectorUtils.HIGH_RISK_PREFIX + (imei != null ? imei : "不可用"));
+                    CollectorUtils.addHighRisk(items, "IMEI", imei != null ? imei : "不可用");
                 }
                 CollectorUtils.add(items, "运营商",       tm.getNetworkOperatorName());
-                CollectorUtils.add(items, "SIM 国家代码", tm.getSimCountryIso().toUpperCase());
-                CollectorUtils.add(items, "电话号码",     CollectorUtils.HIGH_RISK_PREFIX + tm.getLine1Number());
+                String simCountryIso = tm.getSimCountryIso();
+                CollectorUtils.safeAdd(items, "SIM 国家代码",
+                    simCountryIso != null ? simCountryIso.toUpperCase() : null);
+                CollectorUtils.addHighRisk(items, "电话号码", tm.getLine1Number());
                 CollectorUtils.add(items, "设备 SoftwareVersion", tm.getDeviceSoftwareVersion());
+                }
             } catch (Exception e) {
-                CollectorUtils.add(items, "电话信息", "读取失败: " + e.getMessage());
+                CollectorUtils.addDegrade(items, "电话信息",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
             }
         } else {
-            CollectorUtils.add(items, "IMEI / 运营商", "未授予 READ_PHONE_STATE 权限");
+            CollectorUtils.addDegrade(items, "IMEI / 运营商",
+                CollectorUtils.DegradeReason.PERMISSION_DENIED, "未授予 READ_PHONE_STATE 权限");
         }
 
         // ── CPU 信息（无需权限，读取 /proc/cpuinfo）──────────────────
@@ -98,14 +112,26 @@ public class DeviceCollector implements InfoCollector {
 
         // ── 内存信息（无需权限）──────────────────────────────────
         CollectorUtils.addHeader(items, "内存与存储");
-        ActivityManager am =
-            (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
-        am.getMemoryInfo(memInfo);
-        CollectorUtils.add(items, "总内存",     formatBytes(memInfo.totalMem));
-        CollectorUtils.add(items, "可用内存",   formatBytes(memInfo.availMem));
-        CollectorUtils.add(items, "低内存阈值", formatBytes(memInfo.threshold));
-        CollectorUtils.add(items, "当前低内存", String.valueOf(memInfo.lowMemory));
+        ActivityManager am = CollectorUtils.safeService(
+            context,
+            Context.ACTIVITY_SERVICE,
+            ActivityManager.class,
+            items,
+            "内存信息",
+            "ActivityManager 不可用");
+        if (am != null) {
+            try {
+                ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
+                am.getMemoryInfo(memInfo);
+                CollectorUtils.add(items, "总内存",     formatBytes(memInfo.totalMem));
+                CollectorUtils.add(items, "可用内存",   formatBytes(memInfo.availMem));
+                CollectorUtils.add(items, "低内存阈值", formatBytes(memInfo.threshold));
+                CollectorUtils.add(items, "当前低内存", String.valueOf(memInfo.lowMemory));
+            } catch (Exception e) {
+                CollectorUtils.addDegrade(items, "内存信息",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
+            }
+        }
 
         // 内部存储
         StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
@@ -117,13 +143,26 @@ public class DeviceCollector implements InfoCollector {
 
         // ── 屏幕信息（无需权限）──────────────────────────────────
         CollectorUtils.addHeader(items, "屏幕参数");
-        WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
-        DisplayMetrics dm = new DisplayMetrics();
-        wm.getDefaultDisplay().getRealMetrics(dm);
-        CollectorUtils.add(items, "分辨率",   dm.widthPixels + " x " + dm.heightPixels);
-        CollectorUtils.add(items, "DPI",     String.valueOf(dm.densityDpi));
-        CollectorUtils.add(items, "密度",    String.valueOf(dm.density));
-        CollectorUtils.add(items, "刷新率",  String.valueOf(wm.getDefaultDisplay().getRefreshRate()) + " Hz");
+        WindowManager wm = CollectorUtils.safeService(
+            context,
+            Context.WINDOW_SERVICE,
+            WindowManager.class,
+            items,
+            "屏幕参数",
+            "WindowManager 不可用");
+        if (wm != null) {
+            try {
+                DisplayMetrics dm = new DisplayMetrics();
+                wm.getDefaultDisplay().getRealMetrics(dm);
+                CollectorUtils.add(items, "分辨率",   dm.widthPixels + " x " + dm.heightPixels);
+                CollectorUtils.add(items, "DPI",     String.valueOf(dm.densityDpi));
+                CollectorUtils.add(items, "密度",    String.valueOf(dm.density));
+                CollectorUtils.add(items, "刷新率",  String.valueOf(wm.getDefaultDisplay().getRefreshRate()) + " Hz");
+            } catch (Exception e) {
+                CollectorUtils.addDegrade(items, "屏幕参数",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
+            }
+        }
 
         // ── Root / 安全状态（无需权限）───────────────────────────
         CollectorUtils.addHeader(items, "安全状态");

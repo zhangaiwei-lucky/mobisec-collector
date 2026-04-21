@@ -7,11 +7,9 @@ import android.net.ConnectivityManager;
 import android.net.DhcpInfo;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
-import android.telephony.TelephonyManager;
 import android.text.format.Formatter;
 
 import androidx.core.content.ContextCompat;
@@ -52,41 +50,13 @@ public class NetworkCollector implements InfoCollector {
     public List<InfoRow> collect(Context context) {
         List<InfoRow> items = new ArrayList<>();
 
-        ConnectivityManager cm =
-            (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-
         // ── 当前网络状态（无需权限）──────────────────────────────
         CollectorUtils.addHeader(items, "当前网络状态");
-        Network activeNetwork = cm.getActiveNetwork();
-        if (activeNetwork != null) {
-            NetworkCapabilities caps = cm.getNetworkCapabilities(activeNetwork);
-            if (caps != null) {
-                CollectorUtils.add(items, "有 WiFi",    String.valueOf(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)));
-                CollectorUtils.add(items, "有移动数据", String.valueOf(caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)));
-                CollectorUtils.add(items, "有以太网",   String.valueOf(caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)));
-                CollectorUtils.add(items, "是否计费",   String.valueOf(!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)));
-            }
-        } else {
-            CollectorUtils.add(items, "网络状态", "无网络连接");
-        }
+        collectCurrentNetwork(context, items);
 
         // ── 网络接口与 IP 地址（无需权限）──────────────────────
         CollectorUtils.addHeader(items, "网络接口 IP 地址");
-        try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            if (interfaces != null) {
-                for (NetworkInterface ni : Collections.list(interfaces)) {
-                    if (!ni.isUp() || ni.isLoopback()) continue;
-                    for (InetAddress addr : Collections.list(ni.getInetAddresses())) {
-                        if (!addr.isLoopbackAddress()) {
-                            CollectorUtils.add(items, ni.getName(), addr.getHostAddress());
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            CollectorUtils.add(items, "IP 读取失败", e.getMessage());
-        }
+        collectNetworkInterfaces(items);
 
         // ── ARP 缓存（无需权限，揭示局域网设备）──────────────────
         CollectorUtils.addHeader(items, "ARP 缓存（局域网设备探测）");
@@ -94,49 +64,165 @@ public class NetworkCollector implements InfoCollector {
 
         // ── WiFi 详细信息（需权限）──────────────────────────────
         CollectorUtils.addHeader(items, "WiFi 连接信息");
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-            WifiManager wm = (WifiManager) context.getApplicationContext()
-                .getSystemService(Context.WIFI_SERVICE);
-            WifiInfo wi = wm.getConnectionInfo();
-            if (wi != null) {
-                CollectorUtils.add(items, "SSID",    CollectorUtils.HIGH_RISK_PREFIX + wi.getSSID());
-                CollectorUtils.add(items, "BSSID",   CollectorUtils.HIGH_RISK_PREFIX + wi.getBSSID());  // 可定位 AP 位置
-                CollectorUtils.add(items, "MAC 地址", wi.getMacAddress());
-                CollectorUtils.add(items, "信号强度", wi.getRssi() + " dBm");
-                CollectorUtils.add(items, "链接速度", wi.getLinkSpeed() + " Mbps");
-                CollectorUtils.add(items, "IP 地址",
-                    Formatter.formatIpAddress(wi.getIpAddress()));
-                CollectorUtils.add(items, "网络 ID",  String.valueOf(wi.getNetworkId()));
-
-                // DHCP 信息（网关 MAC = 路由器 MAC，可推断位置）
-                DhcpInfo dhcp = wm.getDhcpInfo();
-                CollectorUtils.add(items, "网关 IP",
-                    Formatter.formatIpAddress(dhcp.gateway));
-                CollectorUtils.add(items, "DNS1",
-                    Formatter.formatIpAddress(dhcp.dns1));
-                CollectorUtils.add(items, "DNS2",
-                    Formatter.formatIpAddress(dhcp.dns2));
-            }
-
-            // 周边 WiFi 扫描（可用于 WiFi 定位，精度约 15m）
-            CollectorUtils.addHeader(items, "周边 WiFi 热点（WiFi 定位）");
-            List<ScanResult> scanResults = wm.getScanResults();
-            if (scanResults != null) {
-                for (ScanResult sr : scanResults) {
-                    CollectorUtils.add(items, sr.SSID,
-                        CollectorUtils.HIGH_RISK_PREFIX + "BSSID:" + sr.BSSID + " 信号:" + sr.level + "dBm");
-                }
-            }
-        } else {
-            CollectorUtils.add(items, "WiFi 详情", "需要位置权限（ACCESS_FINE_LOCATION）");
-        }
+        collectWifiInfo(context, items);
 
         // ── /proc/net 路由表（无需权限）──────────────────────────
         CollectorUtils.addHeader(items, "路由表（/proc/net/route）");
         readProcNetRoute(items);
 
         return items;
+    }
+
+    private void collectCurrentNetwork(Context context, List<InfoRow> items) {
+        try {
+            ConnectivityManager cm = CollectorUtils.safeService(
+                    context,
+                    Context.CONNECTIVITY_SERVICE,
+                    ConnectivityManager.class,
+                    items,
+                    "当前网络状态",
+                    "ConnectivityManager 不可用");
+            if (cm == null) return;
+
+            Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork == null) {
+                CollectorUtils.addDegrade(items, "网络状态",
+                        CollectorUtils.DegradeReason.NO_DATA, "当前无活动网络");
+                return;
+            }
+
+            NetworkCapabilities caps = cm.getNetworkCapabilities(activeNetwork);
+            if (caps == null) {
+                CollectorUtils.addDegrade(items, "网络能力",
+                        CollectorUtils.DegradeReason.SYSTEM_RESTRICTED, "系统未返回 NetworkCapabilities");
+                return;
+            }
+            CollectorUtils.safeAdd(items, "有 WiFi",
+                    String.valueOf(caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)));
+            CollectorUtils.safeAdd(items, "有移动数据",
+                    String.valueOf(caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)));
+            CollectorUtils.safeAdd(items, "有以太网",
+                    String.valueOf(caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)));
+            CollectorUtils.safeAdd(items, "是否计费",
+                    String.valueOf(!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)));
+        } catch (Exception e) {
+            CollectorUtils.addDegrade(items, "当前网络状态",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取网络状态失败: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectNetworkInterfaces(List<InfoRow> items) {
+        try {
+            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+            if (interfaces == null) {
+                CollectorUtils.addDegrade(items, "网络接口",
+                        CollectorUtils.DegradeReason.NO_DATA, "系统未返回网络接口列表");
+                return;
+            }
+            boolean hasData = false;
+            for (NetworkInterface ni : Collections.list(interfaces)) {
+                if (!ni.isUp() || ni.isLoopback()) continue;
+                for (InetAddress addr : Collections.list(ni.getInetAddresses())) {
+                    if (!addr.isLoopbackAddress()) {
+                        hasData = true;
+                        CollectorUtils.safeAdd(items, ni.getName(), addr.getHostAddress());
+                    }
+                }
+            }
+            if (!hasData) {
+                CollectorUtils.addDegrade(items, "网络接口",
+                        CollectorUtils.DegradeReason.NO_DATA, "未发现可用 IP 地址");
+            }
+        } catch (Exception e) {
+            CollectorUtils.addDegrade(items, "网络接口",
+                    CollectorUtils.DegradeReason.READ_FAILED, "IP 读取异常: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectWifiInfo(Context context, List<InfoRow> items) {
+        // Android 上系统服务和子对象返回 null 是常见现象：权限缺失、WiFi 关闭、厂商 ROM 限制均可能触发。
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            CollectorUtils.addDegrade(items, "WiFi 详情",
+                    CollectorUtils.DegradeReason.PERMISSION_DENIED, "缺少 ACCESS_FINE_LOCATION 权限");
+            return;
+        }
+        try {
+            WifiManager wm = CollectorUtils.safeService(
+                    context.getApplicationContext(),
+                    Context.WIFI_SERVICE,
+                    WifiManager.class,
+                    items,
+                    "WiFi 服务",
+                    "WifiManager 不可用");
+            if (wm == null) return;
+            collectWifiConnectionInfo(wm, items);
+            collectWifiScanInfo(wm, items);
+        } catch (SecurityException e) {
+            CollectorUtils.addDegrade(items, "WiFi 详情",
+                    CollectorUtils.DegradeReason.SYSTEM_RESTRICTED, "系统限制 WiFi 数据访问");
+        } catch (Exception e) {
+            CollectorUtils.addDegrade(items, "WiFi 详情",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取 WiFi 信息失败: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectWifiConnectionInfo(WifiManager wm, List<InfoRow> items) {
+        try {
+            WifiInfo wi = wm.getConnectionInfo();
+            if (wi == null) {
+                CollectorUtils.addDegrade(items, "WiFi 连接",
+                        CollectorUtils.DegradeReason.NO_DATA, "WiFi 未连接或系统未返回连接信息");
+            } else {
+                CollectorUtils.addHighRisk(items, "SSID", wi.getSSID());
+                CollectorUtils.addHighRisk(items, "BSSID", wi.getBSSID());
+                CollectorUtils.safeAdd(items, "MAC 地址", wi.getMacAddress(), "系统已隐藏");
+                CollectorUtils.safeAdd(items, "信号强度", wi.getRssi() + " dBm");
+                CollectorUtils.safeAdd(items, "链接速度", wi.getLinkSpeed() + " Mbps");
+                CollectorUtils.safeAdd(items, "IP 地址", Formatter.formatIpAddress(wi.getIpAddress()));
+                CollectorUtils.safeAdd(items, "网络 ID", String.valueOf(wi.getNetworkId()));
+            }
+
+            DhcpInfo dhcp = wm.getDhcpInfo();
+            if (dhcp == null) {
+                CollectorUtils.addDegrade(items, "DHCP 信息",
+                        CollectorUtils.DegradeReason.NO_DATA, "WiFi 未就绪或 ROM 未暴露 DHCP 数据");
+            } else {
+                CollectorUtils.safeAdd(items, "网关 IP", Formatter.formatIpAddress(dhcp.gateway));
+                CollectorUtils.safeAdd(items, "DNS1", Formatter.formatIpAddress(dhcp.dns1));
+                CollectorUtils.safeAdd(items, "DNS2", Formatter.formatIpAddress(dhcp.dns2));
+            }
+        } catch (SecurityException e) {
+            CollectorUtils.addDegrade(items, "WiFi 连接",
+                    CollectorUtils.DegradeReason.SYSTEM_RESTRICTED, "系统限制读取连接态信息");
+        } catch (Exception e) {
+            CollectorUtils.addDegrade(items, "WiFi 连接",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取连接态失败: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectWifiScanInfo(WifiManager wm, List<InfoRow> items) {
+        CollectorUtils.addHeader(items, "周边 WiFi 热点（WiFi 定位）");
+        try {
+            List<ScanResult> scanResults = wm.getScanResults();
+            if (scanResults == null || scanResults.isEmpty()) {
+                CollectorUtils.addDegrade(items, "热点扫描",
+                        CollectorUtils.DegradeReason.NO_DATA, "未扫描到热点或系统限制返回结果");
+                return;
+            }
+            for (ScanResult sr : scanResults) {
+                String ssid = sr != null && sr.SSID != null && !sr.SSID.isEmpty() ? sr.SSID : "(隐藏 SSID)";
+                String bssid = sr != null ? sr.BSSID : null;
+                int level = sr != null ? sr.level : 0;
+                CollectorUtils.addHighRisk(items, ssid, "BSSID:" + (bssid != null ? bssid : "N/A") + " 信号:" + level + "dBm");
+            }
+        } catch (SecurityException e) {
+            CollectorUtils.addDegrade(items, "热点扫描",
+                    CollectorUtils.DegradeReason.SYSTEM_RESTRICTED, "系统限制热点扫描结果访问");
+        } catch (Exception e) {
+            CollectorUtils.addDegrade(items, "热点扫描",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取扫描结果失败: " + e.getClass().getSimpleName());
+        }
     }
 
     /**
@@ -147,6 +233,7 @@ public class NetworkCollector implements InfoCollector {
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/net/arp"))) {
             String line;
             br.readLine(); // 跳过表头
+            boolean hasData = false;
             while ((line = br.readLine()) != null) {
                 String[] parts = line.trim().split("\\s+");
                 if (parts.length >= 4) {
@@ -154,13 +241,18 @@ public class NetworkCollector implements InfoCollector {
                     String mac = parts[3];
                     String iface = parts.length >= 6 ? parts[5] : "?";
                     if (!mac.equals("00:00:00:00:00:00")) {
-                        CollectorUtils.add(items, ip + " [" + iface + "]",
-                            CollectorUtils.HIGH_RISK_PREFIX + "MAC: " + mac);
+                        hasData = true;
+                        CollectorUtils.addHighRisk(items, ip + " [" + iface + "]", "MAC: " + mac);
                     }
                 }
             }
+            if (!hasData) {
+                CollectorUtils.addDegrade(items, "ARP 缓存",
+                        CollectorUtils.DegradeReason.NO_DATA, "未发现可用 ARP 记录");
+            }
         } catch (IOException e) {
-            CollectorUtils.add(items, "ARP 读取", "失败: " + e.getMessage());
+            CollectorUtils.addDegrade(items, "ARP 读取",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
         }
     }
 
@@ -169,15 +261,22 @@ public class NetworkCollector implements InfoCollector {
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/net/route"))) {
             String line;
             br.readLine(); // 跳过表头
+            boolean hasData = false;
             while ((line = br.readLine()) != null) {
                 String[] parts = line.trim().split("\\s+");
                 if (parts.length >= 3) {
-                    CollectorUtils.add(items, "接口: " + parts[0],
+                    hasData = true;
+                    CollectorUtils.safeAdd(items, "接口: " + parts[0],
                         "目标: " + hexToIp(parts[1]) + " 网关: " + hexToIp(parts[2]));
                 }
             }
+            if (!hasData) {
+                CollectorUtils.addDegrade(items, "路由表",
+                        CollectorUtils.DegradeReason.NO_DATA, "路由表为空");
+            }
         } catch (IOException e) {
-            CollectorUtils.add(items, "路由表读取", "失败: " + e.getMessage());
+            CollectorUtils.addDegrade(items, "路由表读取",
+                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
         }
     }
 
