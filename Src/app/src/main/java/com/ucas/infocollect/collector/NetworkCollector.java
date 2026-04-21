@@ -16,6 +16,8 @@ import android.text.format.Formatter;
 
 import androidx.core.content.ContextCompat;
 
+import com.ucas.infocollect.model.InfoRow;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
@@ -25,7 +27,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 网络信息收集器
@@ -48,8 +49,8 @@ import java.util.Map;
 public class NetworkCollector implements InfoCollector {
 
     @Override
-    public List<Map.Entry<String, String>> collect(Context context) {
-        List<Map.Entry<String, String>> items = new ArrayList<>();
+    public List<InfoRow> collect(Context context) {
+        List<InfoRow> items = new ArrayList<>();
 
         ConnectivityManager cm =
             (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -142,7 +143,7 @@ public class NetworkCollector implements InfoCollector {
      * 读取 ARP 缓存 - 揭示局域网内所有通信过的设备 IP 和 MAC
      * 攻击价值：构建局域网拓扑，辅助 ARP 欺骗 / MITM
      */
-    private void collectArpTable(List<Map.Entry<String, String>> items) {
+    private void collectArpTable(List<InfoRow> items) {
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/net/arp"))) {
             String line;
             br.readLine(); // 跳过表头
@@ -164,7 +165,7 @@ public class NetworkCollector implements InfoCollector {
     }
 
     /** 读取内核路由表 */
-    private void readProcNetRoute(List<Map.Entry<String, String>> items) {
+    private void readProcNetRoute(List<InfoRow> items) {
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/net/route"))) {
             String line;
             br.readLine(); // 跳过表头

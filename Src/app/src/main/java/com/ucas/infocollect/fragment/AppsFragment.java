@@ -4,11 +4,12 @@ import com.ucas.infocollect.collector.AppCollector;
 import com.ucas.infocollect.collector.InfoCollector;
 
 import java.util.List;
-import java.util.Map;
+
+import com.ucas.infocollect.model.InfoRow;
 
 public class AppsFragment extends BaseInfoFragment {
     @Override
-    protected List<Map.Entry<String, String>> collectInfo() {
+    protected List<InfoRow> collectInfo() {
         InfoCollector collector = new AppCollector();
         return collector.collect(requireContext());
     }

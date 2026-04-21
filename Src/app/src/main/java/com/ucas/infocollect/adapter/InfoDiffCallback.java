@@ -2,17 +2,17 @@ package com.ucas.infocollect.adapter;
 
 import androidx.recyclerview.widget.DiffUtil;
 
+import com.ucas.infocollect.model.InfoRow;
+
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 public class InfoDiffCallback extends DiffUtil.Callback {
 
-    private final List<Map.Entry<String, String>> oldList;
-    private final List<Map.Entry<String, String>> newList;
+    private final List<InfoRow> oldList;
+    private final List<InfoRow> newList;
 
-    public InfoDiffCallback(List<Map.Entry<String, String>> oldList,
-                            List<Map.Entry<String, String>> newList) {
+    public InfoDiffCallback(List<InfoRow> oldList, List<InfoRow> newList) {
         this.oldList = oldList;
         this.newList = newList;
     }
@@ -29,15 +29,17 @@ public class InfoDiffCallback extends DiffUtil.Callback {
 
     @Override
     public boolean areItemsTheSame(int oldItemPosition, int newItemPosition) {
-        return Objects.equals(oldList.get(oldItemPosition).getKey(),
-            newList.get(newItemPosition).getKey());
+        return oldList.get(oldItemPosition).getStableId()
+            == newList.get(newItemPosition).getStableId();
     }
 
     @Override
     public boolean areContentsTheSame(int oldItemPosition, int newItemPosition) {
-        Map.Entry<String, String> oldItem = oldList.get(oldItemPosition);
-        Map.Entry<String, String> newItem = newList.get(newItemPosition);
-        return Objects.equals(oldItem.getKey(), newItem.getKey())
-            && Objects.equals(oldItem.getValue(), newItem.getValue());
+        InfoRow oldItem = oldList.get(oldItemPosition);
+        InfoRow newItem = newList.get(newItemPosition);
+        return oldItem.getType() == newItem.getType()
+            && Objects.equals(oldItem.getKey(), newItem.getKey())
+            && Objects.equals(oldItem.getValue(), newItem.getValue())
+            && oldItem.getRiskLevel() == newItem.getRiskLevel();
     }
 }

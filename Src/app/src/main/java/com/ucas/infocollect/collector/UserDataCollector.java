@@ -17,12 +17,13 @@ import android.provider.Settings;
 
 import androidx.core.content.ContextCompat;
 
+import com.ucas.infocollect.model.InfoRow;
+
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.TimeZone;
 
 /**
@@ -37,8 +38,8 @@ public class UserDataCollector implements InfoCollector {
     private static final int MAX_CALL_LOG_DISPLAY = 10;
 
     @Override
-    public List<Map.Entry<String, String>> collect(Context context) {
-        List<Map.Entry<String, String>> items = new ArrayList<>();
+    public List<InfoRow> collect(Context context) {
+        List<InfoRow> items = new ArrayList<>();
 
         // ── 剪贴板（需要焦点窗口，Android 10+）──────────────────
         CollectorUtils.addHeader(items, "剪贴板内容（需 App 处于前台焦点）");
@@ -79,7 +80,7 @@ public class UserDataCollector implements InfoCollector {
 
     // ─────────────────────────────────────────────────────────────
 
-    private void readClipboard(Context context, List<Map.Entry<String, String>> items) {
+    private void readClipboard(Context context, List<InfoRow> items) {
         try {
             ClipboardManager cm =
                 (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
@@ -115,7 +116,7 @@ public class UserDataCollector implements InfoCollector {
         }
     }
 
-    private void readLockScreenInfo(Context context, List<Map.Entry<String, String>> items) {
+    private void readLockScreenInfo(Context context, List<InfoRow> items) {
         try {
             KeyguardManager km =
                 (KeyguardManager) context.getSystemService(Context.KEYGUARD_SERVICE);
@@ -173,7 +174,7 @@ public class UserDataCollector implements InfoCollector {
         }
     }
 
-    private void readAccounts(Context context, List<Map.Entry<String, String>> items) {
+    private void readAccounts(Context context, List<InfoRow> items) {
         // 尝试有权限和无权限两种路径
         boolean hasPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED;
@@ -198,7 +199,7 @@ public class UserDataCollector implements InfoCollector {
         }
     }
 
-    private void readContacts(Context context, List<Map.Entry<String, String>> items) {
+    private void readContacts(Context context, List<InfoRow> items) {
         try {
             Cursor cursor = context.getContentResolver().query(
                 ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -228,7 +229,7 @@ public class UserDataCollector implements InfoCollector {
         }
     }
 
-    private void readCallLog(Context context, List<Map.Entry<String, String>> items) {
+    private void readCallLog(Context context, List<InfoRow> items) {
         try {
             Cursor cursor = context.getContentResolver().query(
                 CallLog.Calls.CONTENT_URI,
@@ -267,7 +268,7 @@ public class UserDataCollector implements InfoCollector {
         }
     }
 
-    private void readPreferences(Context context, List<Map.Entry<String, String>> items) {
+    private void readPreferences(Context context, List<InfoRow> items) {
         try {
             ContentResolver cr = context.getContentResolver();
             CollectorUtils.add(items, "时区",     TimeZone.getDefault().getID());

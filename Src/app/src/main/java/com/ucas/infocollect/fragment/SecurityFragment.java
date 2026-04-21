@@ -4,11 +4,12 @@ import com.ucas.infocollect.collector.SecurityCollector;
 import com.ucas.infocollect.collector.InfoCollector;
 
 import java.util.List;
-import java.util.Map;
+
+import com.ucas.infocollect.model.InfoRow;
 
 public class SecurityFragment extends BaseInfoFragment {
     @Override
-    protected List<Map.Entry<String, String>> collectInfo() {
+    protected List<InfoRow> collectInfo() {
         InfoCollector collector = new SecurityCollector();
         return collector.collect(requireContext());
     }

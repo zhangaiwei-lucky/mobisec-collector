@@ -15,12 +15,13 @@ import android.view.WindowManager;
 
 import androidx.core.content.ContextCompat;
 
+import com.ucas.infocollect.model.InfoRow;
+
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 设备与系统信息收集器
@@ -36,8 +37,8 @@ import java.util.Map;
 public class DeviceCollector implements InfoCollector {
 
     @Override
-    public List<Map.Entry<String, String>> collect(Context context) {
-        List<Map.Entry<String, String>> items = new ArrayList<>();
+    public List<InfoRow> collect(Context context) {
+        List<InfoRow> items = new ArrayList<>();
 
         // ── 基本硬件信息（无需权限）──────────────────────────────
         CollectorUtils.addHeader(items, "基本设备信息");

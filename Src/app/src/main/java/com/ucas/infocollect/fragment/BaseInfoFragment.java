@@ -17,9 +17,10 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.ucas.infocollect.R;
 import com.ucas.infocollect.adapter.InfoAdapter;
+import com.ucas.infocollect.model.InfoRow;
+import com.ucas.infocollect.model.RiskLevel;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -93,14 +94,14 @@ public abstract class BaseInfoFragment extends Fragment {
 
         try {
             Future<?> task = activeExecutor.submit(() -> {
-                List<Map.Entry<String, String>> data;
+                List<InfoRow> data;
                 try {
                     data = collectInfo();
                 } catch (Exception e) {
                     data = new java.util.ArrayList<>();
-                    data.add(new java.util.AbstractMap.SimpleEntry<>("收集异常", e.getMessage()));
+                    data.add(InfoRow.item("收集异常", e.getMessage(), RiskLevel.HIGH));
                 }
-                final List<Map.Entry<String, String>> result = data;
+                final List<InfoRow> result = data;
                 mainHandler.post(() -> {
                     synchronized (taskLock) {
                         runningTask = null;
@@ -121,7 +122,7 @@ public abstract class BaseInfoFragment extends Fragment {
         }
     }
 
-    protected abstract List<Map.Entry<String, String>> collectInfo();
+    protected abstract List<InfoRow> collectInfo();
 
     @Override
     public void onDestroyView() {

@@ -9,6 +9,8 @@ import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 
+import com.ucas.infocollect.model.InfoRow;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -134,9 +136,9 @@ public class SecurityCollector implements InfoCollector {
     }
 
     @Override
-    public List<Map.Entry<String, String>> collect(Context context) {
+    public List<InfoRow> collect(Context context) {
         PackageManager pm = context.getPackageManager();
-        List<Map.Entry<String, String>> items = new ArrayList<>();
+        List<InfoRow> items = new ArrayList<>();
 
         // ── 1. SELinux 状态（：SEAndroid）────────────────
         CollectorUtils.addHeader(items, "SELinux / SEAndroid 安全状态");
@@ -176,7 +178,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 1. SELinux 状态
     // ─────────────────────────────────────────────────────────────
-    private void collectSeLinux(List<Map.Entry<String, String>> items) {
+    private void collectSeLinux(List<InfoRow> items) {
         // 方法1：读取 /sys/fs/selinux/enforce
         String enforceFile = readFile("/sys/fs/selinux/enforce");
         if (!enforceFile.isEmpty()) {
@@ -222,7 +224,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 2. 系统敏感文件
     // ─────────────────────────────────────────────────────────────
-    private void checkSensitiveFiles(List<Map.Entry<String, String>> items) {
+    private void checkSensitiveFiles(List<InfoRow> items) {
         //  ：恶意软件通过 ADB 删除这些文件绕过锁屏
         String[][] sensitiveFiles = {
             {"/data/system/gesture.key",        "手势锁图案"},
@@ -262,7 +264,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 3. 导出组件扫描（Intent Scheme URL 攻击面）
     // ─────────────────────────────────────────────────────────────
-    private void scanExportedComponents(PackageManager pm, List<Map.Entry<String, String>> items) {
+    private void scanExportedComponents(PackageManager pm, List<InfoRow> items) {
         List<PackageInfo> packages;
         try {
             packages = pm.getInstalledPackages(
@@ -331,7 +333,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 4. Content Provider 路径遍历风险
     // ─────────────────────────────────────────────────────────────
-    private void scanDangerousProviders(PackageManager pm, List<Map.Entry<String, String>> items) {
+    private void scanDangerousProviders(PackageManager pm, List<InfoRow> items) {
         List<PackageInfo> packages;
         try {
             packages = pm.getInstalledPackages(PackageManager.GET_PROVIDERS);
@@ -382,7 +384,7 @@ public class SecurityCollector implements InfoCollector {
      * 2) 这是“工程化近似检测”，并非完整法证级审计流程。
      * 3) 检测结论仅供安全提示，不应作为漏洞归因的唯一依据。
      */
-    private void analyzeSignatureSchemes(PackageManager pm, List<Map.Entry<String, String>> items) {
+    private void analyzeSignatureSchemes(PackageManager pm, List<InfoRow> items) {
         CollectorUtils.add(items, "Janus 漏洞说明",
             "CVE-2017-13156：仅用 V1 签名的 APK 在 Android 5.1-8.0 上\n" +
             "可在文件头附加 DEX 字节码而不破坏签名，实现无感更新劫持");
@@ -441,7 +443,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 6. 过权限应用统计
     // ─────────────────────────────────────────────────────────────
-    private void scanOverPrivilegedApps(PackageManager pm, List<Map.Entry<String, String>> items) {
+    private void scanOverPrivilegedApps(PackageManager pm, List<InfoRow> items) {
         CollectorUtils.add(items, "背景",
             "研究表明 56% 的应用存在过度权限声明；\n" +
             "60% 的应用拥有 INTERNET 权限（数据外传通道）");
@@ -481,7 +483,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 7. 明文 HTTP 应用（HTTPS 降级风险，）
     // ─────────────────────────────────────────────────────────────
-    private void scanCleartextApps(PackageManager pm, List<Map.Entry<String, String>> items) {
+    private void scanCleartextApps(PackageManager pm, List<InfoRow> items) {
         CollectorUtils.add(items, "背景",
             "AFNetworking 漏洞案例：1500+ 应用因错误配置 SSL 验证，\n" +
             "在同一 WiFi 下可被 MITM 攻击并截获所有 HTTPS 流量");
@@ -517,7 +519,7 @@ public class SecurityCollector implements InfoCollector {
     // ─────────────────────────────────────────────────────────────
     // 8. 运行中进程（挖矿木马 / 可疑服务检测，）
     // ─────────────────────────────────────────────────────────────
-    private void checkRunningProcesses(List<Map.Entry<String, String>> items) {
+    private void checkRunningProcesses(List<InfoRow> items) {
         CollectorUtils.add(items, "挖矿木马特征",
             "CpuMiner 服务以 AndroidManifest 中注册的后台服务形式运行，\n" +
             "持续占用 CPU。可通过进程列表和 CPU 使用率检测。");
@@ -769,7 +771,7 @@ public class SecurityCollector implements InfoCollector {
     }
 
     private void addSignatureSamples(
-            List<Map.Entry<String, String>> items,
+            List<InfoRow> items,
             String label,
             List<SignatureDetectionResult> bucket,
             int maxSamples,

@@ -8,12 +8,13 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 
+import com.ucas.infocollect.model.InfoRow;
+
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * 已安装应用与使用情况收集器
@@ -38,9 +39,9 @@ public class AppCollector implements InfoCollector {
     };
 
     @Override
-    public List<Map.Entry<String, String>> collect(Context context) {
+    public List<InfoRow> collect(Context context) {
         PackageManager pm = context.getPackageManager();
-        List<Map.Entry<String, String>> items = new ArrayList<>();
+        List<InfoRow> items = new ArrayList<>();
 
         // 获取应用列表：优先用 GET_PERMISSIONS，失败则降级到 0
         List<PackageInfo> packages = new ArrayList<>();
@@ -128,7 +129,7 @@ public class AppCollector implements InfoCollector {
         return items;
     }
 
-    private void collectUsageStats(Context context, List<Map.Entry<String, String>> items) {
+    private void collectUsageStats(Context context, List<InfoRow> items) {
         try {
             UsageStatsManager usm =
                 (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
