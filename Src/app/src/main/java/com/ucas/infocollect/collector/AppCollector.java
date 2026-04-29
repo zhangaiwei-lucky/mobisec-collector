@@ -39,9 +39,20 @@ public class AppCollector implements InfoCollector {
         "BIND_NOTIFICATION_LISTENER_SERVICE", "BIND_DEVICE_ADMIN"
     };
 
+    // 安全/分析工具关键词（仅匹配用户应用，且排除 VPN 关键词）
     private static final String[] SECURITY_KEYWORDS = {
-        "antivirus", "360", "kaspersky", "avast", "mcafee", "vpn",
+        "antivirus", "360", "kaspersky", "avast", "mcafee",
         "supersu", "magisk", "xposed", "frida", "objection"
+    };
+
+    // VPN 关键词单独处理（系统 VPN 组件不应标为"分析工具"）
+    private static final String[] VPN_KEYWORDS = { "vpn" };
+
+    // 系统包名前缀白名单：这些前缀的应用不归入安全/VPN 工具
+    private static final String[] SYSTEM_PKG_PREFIXES = {
+        "com.android.", "android.", "com.google.", "com.coloros.",
+        "com.oppo.", "com.realme.", "com.miui.", "com.xiaomi.",
+        "com.huawei.", "com.samsung.", "com.oneplus.", "com.oplus."
     };
 
     @Override
@@ -71,24 +82,34 @@ public class AppCollector implements InfoCollector {
         CollectorUtils.addHeader(items, "应用统计概览");
         int userApps = 0, sysApps = 0, highPermApps = 0;
         List<String> securityTools = new ArrayList<>();
+        List<String> vpnApps      = new ArrayList<>();
 
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             if (isSys) sysApps++; else userApps++;
             if (hasSensitivePerm(pkg)) highPermApps++;
 
-            String pkgLower = pkg.packageName.toLowerCase(Locale.ROOT);
-            for (String kw : SECURITY_KEYWORDS) {
-                if (pkgLower.contains(kw)) { securityTools.add(pkg.packageName); break; }
+            // 安全工具识别：仅匹配用户应用，且排除系统包名前缀
+            boolean isSysPkg = isSystemPackageName(pkg.packageName);
+            if (!isSys && !isSysPkg) {
+                String pkgLower = pkg.packageName.toLowerCase(Locale.ROOT);
+                for (String kw : SECURITY_KEYWORDS) {
+                    if (pkgLower.contains(kw)) { securityTools.add(pkg.packageName); break; }
+                }
+                for (String kw : VPN_KEYWORDS) {
+                    if (pkgLower.contains(kw)) { vpnApps.add(pkg.packageName); break; }
+                }
             }
         }
 
         CollectorUtils.add(items, "用户应用数量",       String.valueOf(userApps));
         CollectorUtils.add(items, "系统应用数量",       String.valueOf(sysApps));
         CollectorUtils.add(items, "持有高危权限的应用", String.valueOf(highPermApps));
-        CollectorUtils.add(items, "检测到的安全/分析工具",
+        CollectorUtils.add(items, "检测到的安全/分析工具（用户应用）",
             securityTools.isEmpty() ? "无"
                 : CollectorUtils.HIGH_RISK_PREFIX + String.join(", ", securityTools));
+        CollectorUtils.add(items, "VPN 相关应用（用户应用）",
+            vpnApps.isEmpty() ? "无" : String.join(", ", vpnApps));
         CollectorUtils.add(items, "提示", "点击下方应用可查看完整权限详情 →");
 
         // ── 用户应用列表（APP_ITEM 可点击）────────────────────────────
@@ -180,6 +201,13 @@ public class AppCollector implements InfoCollector {
                 android.os.Process.myUid(), context.getPackageName());
             return mode == AppOpsManager.MODE_ALLOWED;
         } catch (Exception e) { return false; }
+    }
+
+    private boolean isSystemPackageName(String packageName) {
+        for (String prefix : SYSTEM_PKG_PREFIXES) {
+            if (packageName.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     private boolean hasSensitivePerm(PackageInfo pkg) {

@@ -57,6 +57,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
     private final List<float[]>  gyroSnap     = new ArrayList<>();
     private final List<Float>    pressureSnap = new ArrayList<>();
     private boolean isSnapping = false;
+    private boolean pressureDataReceived = false; // 是否已收到气压计回调
 
     // UI
     private TextView tvSensorList, tvAccel, tvGyro, tvActivity, tvFingerprint, tvPressure;
@@ -134,6 +135,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
                 gyroSnap.add(event.values.clone());
         } else if (type == Sensor.TYPE_PRESSURE) {
             livePressure = event.values[0];
+            pressureDataReceived = true;
             if (isSnapping && pressureSnap.size() < MAX_SAMPLES)
                 pressureSnap.add(event.values[0]);
         }
@@ -153,12 +155,18 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         tvGyro.setText(String.format(Locale.getDefault(),
             "角速度 (rad/s) X=%+7.4f  Y=%+7.4f  Z=%+7.4f",
             liveGyro[0], liveGyro[1], liveGyro[2]));
-        if (tvPressure != null && pressureSensor != null) {
-            float altitude = SensorManager.getAltitude(
-                SensorManager.PRESSURE_STANDARD_ATMOSPHERE, livePressure);
-            tvPressure.setText(String.format(Locale.getDefault(),
-                "气压: %.2f hPa  |  估算海拔: %.1f m  |  ≈楼层: %d",
-                livePressure, altitude, Math.round(altitude / 3.0)));
+        if (tvPressure != null) {
+            if (pressureSensor == null) {
+                tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
+            } else if (!pressureDataReceived) {
+                tvPressure.setText("气压计：暂未收到气压数据（传感器存在，等待回调）");
+            } else {
+                float altitude = SensorManager.getAltitude(
+                    SensorManager.PRESSURE_STANDARD_ATMOSPHERE, livePressure);
+                tvPressure.setText(String.format(Locale.getDefault(),
+                    "气压: %.2f hPa  |  估算海拔: %.1f m  |  ≈楼层: %d",
+                    livePressure, altitude, Math.round(altitude / 3.0)));
+            }
         }
     }
 
@@ -172,7 +180,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         btnSnap.setEnabled(false);
         btnSnap.setText("采集中... (5s)");
         progressBar.setVisibility(View.VISIBLE);
-        tvFingerprint.setText("正在采集传感器噪声数据...");
+        tvFingerprint.setText("正在采集传感器噪声数据...\n请保持手机静置，勿晃动");
         tvActivity.setText("分析中...");
 
         stopSnapRunnable = this::finishSnapshot;
@@ -251,7 +259,8 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         String hashStr = String.format("%016X", hash);
 
         StringBuilder sb = new StringBuilder();
-        sb.append("═══ 传感器硬件指纹 ═══\n");
+        sb.append("═══ 实验性传感器指纹 ═══\n");
+        sb.append("⚠ 稳定性需在静止、多轮、多设备条件下验证\n");
         sb.append(String.format("本次指纹哈希: %s\n\n", hashStr));
 
         sb.append("加速度计 Bias（静态偏差）:\n");
@@ -266,7 +275,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             sb.append(String.format("  Z: %+.6f  σ=%.6f\n", gMean[2], gStd[2]));
         }
 
-        // 气压计数据
+        // 气压计数据（带存在性检查）
         if (!pressureSnap.isEmpty()) {
             double pMean = 0;
             for (float p : pressureSnap) pMean += p;
@@ -278,47 +287,92 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             sb.append(String.format("  估算海拔: %.1f m（约 %d 楼）\n",
                 altitude, Math.round(altitude / 3.0)));
             sb.append("  侧信道价值: 可推断所在楼层变化（电梯场景）\n");
+        } else if (pressureSensor != null) {
+            sb.append("\n气压计 (TYPE_PRESSURE): 传感器存在，采集期间暂未收到数据\n");
+        } else {
+            sb.append("\n气压计 (TYPE_PRESSURE): 本设备无气压计\n");
         }
 
-        // 历史指纹对比
-        sb.append("\n── 历史指纹对比 ──\n");
+        // 历史指纹对比（基于均值向量 L2 距离，比纯 hash 匹配更有意义）
+        // 存储格式: "HASH|ax|ay|az|gx|gy|gz" 每条记录，用逗号分隔
+        sb.append("\n── 历史指纹对比（向量距离） ──\n");
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_SENSOR, Context.MODE_PRIVATE);
         String history = prefs.getString(KEY_HISTORY, "");
-        String[] histList = history.isEmpty() ? new String[0] : history.split(",");
-        int matchCount = 0;
-        for (String h : histList) {
-            if (h.equals(hashStr)) matchCount++;
-        }
-        if (histList.length == 0) {
-            sb.append("  首次采集，暂无历史数据\n");
-        } else {
-            sb.append(String.format("  历史记录数: %d\n", histList.length));
-            sb.append(String.format("  与历史匹配次数: %d/%d\n", matchCount, histList.length));
-            sb.append(histList.length > 0
-                ? "  最近历史: " + histList[histList.length - 1] + "\n" : "");
-            double similarity = histList.length > 0
-                ? (double) matchCount / histList.length * 100 : 0;
-            sb.append(String.format("  相似度: %.0f%% ", similarity));
-            sb.append(similarity > 60 ? "（指纹稳定，可用于追踪）\n" : "（差异较大，可能受环境影响）\n");
+        String[] histEntries = history.isEmpty() ? new String[0] : history.split(",");
+
+        double[] curVec = { aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2] };
+        double minDist = Double.MAX_VALUE;
+        int validCount = 0;
+        for (String entry : histEntries) {
+            double[] vec = parseHistoryEntry(entry);
+            if (vec != null) {
+                validCount++;
+                double dist = vectorDistance(curVec, vec);
+                if (dist < minDist) minDist = dist;
+            }
         }
 
-        // 保存到历史
-        String[] newHistory;
-        if (histList.length >= MAX_HISTORY) {
-            newHistory = new String[MAX_HISTORY];
-            System.arraycopy(histList, histList.length - MAX_HISTORY + 1, newHistory, 0, MAX_HISTORY - 1);
-            newHistory[MAX_HISTORY - 1] = hashStr;
+        if (validCount == 0) {
+            sb.append("  首次采集，暂无历史数据\n");
         } else {
-            newHistory = new String[histList.length + 1];
-            System.arraycopy(histList, 0, newHistory, 0, histList.length);
-            newHistory[histList.length] = hashStr;
+            sb.append(String.format("  历史记录数: %d\n", validCount));
+            sb.append(String.format("  与最近历史的向量距离: %.6f\n", minDist));
+            // 距离越小相似度越高；distance=0 → 100%，distance很大 → 接近0%
+            double similarity = 100.0 / (1.0 + minDist * 50.0);
+            sb.append(String.format("  估算相似度: %.1f%%\n", similarity));
+            sb.append("  注：相似度受温度、姿态、运动影响；请静置多次采集以评估稳定性\n");
+        }
+
+        // 保存到历史（新格式含向量数据）
+        String newEntry = String.format(Locale.US, "%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
+            hashStr, aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2]);
+        String[] newHistory;
+        if (histEntries.length >= MAX_HISTORY) {
+            newHistory = new String[MAX_HISTORY];
+            System.arraycopy(histEntries, histEntries.length - MAX_HISTORY + 1, newHistory, 0, MAX_HISTORY - 1);
+            newHistory[MAX_HISTORY - 1] = newEntry;
+        } else {
+            newHistory = new String[histEntries.length + 1];
+            System.arraycopy(histEntries, 0, newHistory, 0, histEntries.length);
+            newHistory[histEntries.length] = newEntry;
         }
         prefs.edit().putString(KEY_HISTORY, String.join(",", newHistory)).apply();
 
-        sb.append("\n⚠ 无需任何权限 · 实验性指纹（稳定性需多设备多次验证）");
+        sb.append("\n⚠ 无需任何权限 · 实验性传感器侧信道指纹原型\n");
+        sb.append("（稳定性需在静止状态、多轮采集、多设备间交叉验证）");
 
         tvFingerprint.setTextColor(ContextCompat.getColor(requireContext(), R.color.risk_high_text));
         tvFingerprint.setText(sb.toString());
+    }
+
+    /** 解析历史条目：格式 "HASH|ax|ay|az|gx|gy|gz"，返回向量或 null */
+    private double[] parseHistoryEntry(String entry) {
+        if (entry == null) return null;
+        String[] parts = entry.split("\\|");
+        if (parts.length != 7) return null;
+        try {
+            return new double[]{
+                Double.parseDouble(parts[1]),
+                Double.parseDouble(parts[2]),
+                Double.parseDouble(parts[3]),
+                Double.parseDouble(parts[4]),
+                Double.parseDouble(parts[5]),
+                Double.parseDouble(parts[6])
+            };
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** L2 向量距离 */
+    private double vectorDistance(double[] a, double[] b) {
+        double sum = 0;
+        int len = Math.min(a.length, b.length);
+        for (int i = 0; i < len; i++) {
+            double d = a[i] - b[i];
+            sum += d * d;
+        }
+        return Math.sqrt(sum);
     }
 
     // ── 传感器清单 ─────────────────────────────────────────────────
@@ -336,6 +390,20 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         }
         sb.append("\n共 ").append(all.size()).append(" 个传感器");
         tvSensorList.setText(sb.toString());
+
+        // 初始化气压计状态显示
+        if (tvPressure != null) {
+            if (pressureSensor == null) {
+                tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
+            } else {
+                tvPressure.setText("气压计：正在等待数据...");
+            }
+        }
+
+        // 初始化指纹区域提示
+        if (tvFingerprint != null) {
+            tvFingerprint.setText("点击下方按钮采集实验性传感器指纹\n建议先将手机静置 5 秒后再采集");
+        }
     }
 
     // ── 统计工具 ───────────────────────────────────────────────────

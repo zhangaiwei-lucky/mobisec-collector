@@ -165,7 +165,7 @@ public class SecurityCollector implements InfoCollector {
         scanOverPrivilegedApps(pm, items);
 
         // ── 7. 允许明文 HTTP 的应用（HTTPS降级风险）──────────────
-        CollectorUtils.addHeader(items, "允许明文 HTTP 的应用（MITM 攻击面）");
+        CollectorUtils.addHeader(items, "允许明文 HTTP 的应用（静态配置风险初筛）");
         scanCleartextApps(pm, items);
 
         // ── 8. 运行中服务 / 可疑后台进程（挖矿木马特征）──────────
@@ -179,45 +179,86 @@ public class SecurityCollector implements InfoCollector {
     // 1. SELinux 状态
     // ─────────────────────────────────────────────────────────────
     private void collectSeLinux(List<InfoRow> items) {
-        // 方法1：读取 /sys/fs/selinux/enforce
-        String enforceFile = readFile("/sys/fs/selinux/enforce");
-        if (!enforceFile.isEmpty()) {
-            boolean enforcing = enforceFile.trim().equals("1");
-            CollectorUtils.add(items, "SELinux 模式",
-                enforcing ? "Enforcing（强制）✓ MAC 策略生效"
-                          : CollectorUtils.HIGH_RISK_PREFIX + "Permissive（宽松）— MAC 策略不生效，提权风险高");
+        // 方法1：读取 /sys/fs/selinux/enforce（优先来源，1=Enforcing，0=Permissive）
+        String enforceRaw = readFile("/sys/fs/selinux/enforce").trim();
+        Boolean fileEnforcing = null;
+        if (!enforceRaw.isEmpty()) {
+            fileEnforcing = enforceRaw.equals("1");
+            CollectorUtils.add(items, "SELinux 模式（/sys/fs/selinux/enforce）",
+                fileEnforcing ? "1 → Enforcing（强制）✓ MAC 策略生效"
+                              : CollectorUtils.HIGH_RISK_PREFIX
+                                + "0 → Permissive（宽松）— MAC 策略不生效，提权风险高");
+        } else {
+            CollectorUtils.add(items, "SELinux 模式（/sys/fs/selinux/enforce）",
+                "无法读取（Android 系统限制，请以 adb shell getenforce 复核）");
         }
 
         // 方法2：读取 /proc/sys/kernel/perf_event_paranoid（内核安全参数）
-        String paranoid = readFile("/proc/sys/kernel/perf_event_paranoid");
-        if (!paranoid.isEmpty()) {
-            int val = parseIntSafe(paranoid.trim());
-            CollectorUtils.add(items, "perf_event 偏执级别",
-                val + (val >= 2 ? "（安全）" : CollectorUtils.HIGH_RISK_PREFIX + "（< 2，侧信道泄露风险）"));
+        // 注意：-1 在某些内核含义为"无限制"，读取失败时显示系统限制而非标高危
+        String paranoidRaw = readFile("/proc/sys/kernel/perf_event_paranoid").trim();
+        if (!paranoidRaw.isEmpty()) {
+            try {
+                int val = Integer.parseInt(paranoidRaw);
+                if (val >= 2) {
+                    CollectorUtils.add(items, "perf_event 偏执级别", val + "（≥2，安全）");
+                } else if (val >= 0) {
+                    // 0 或 1：确实存在侧信道泄露风险
+                    CollectorUtils.add(items, "perf_event 偏执级别",
+                        CollectorUtils.HIGH_RISK_PREFIX + val + "（< 2，侧信道泄露风险）");
+                } else {
+                    // val < 0（如 -1）：内核特殊配置，不作为确定高危
+                    CollectorUtils.add(items, "perf_event 偏执级别",
+                        "无法确认（读取值: " + val + "，属内核特殊配置，系统限制）");
+                }
+            } catch (NumberFormatException e) {
+                CollectorUtils.add(items, "perf_event 偏执级别", "无法读取/系统限制（内容: " + paranoidRaw + "）");
+            }
+        } else {
+            CollectorUtils.add(items, "perf_event 偏执级别", "无法读取/系统限制");
         }
 
-        // 方法3：通过 Java 反射获取 SELinux 状态
+        // 方法3：通过 Java 反射获取 SELinux 状态（辅助来源，与文件来源交叉比对）
         try {
             Class<?> seLinux = Class.forName("android.os.SELinux");
             Method isSELinuxEnabled = seLinux.getMethod("isSELinuxEnabled");
             Method isSELinuxEnforced = seLinux.getMethod("isSELinuxEnforced");
             boolean enabled  = (Boolean) isSELinuxEnabled.invoke(null);
             boolean enforced = (Boolean) isSELinuxEnforced.invoke(null);
-            CollectorUtils.add(items, "SELinux 已启用", String.valueOf(enabled));
-            CollectorUtils.add(items, "SELinux 已强制",
-                enforced ? "是" : CollectorUtils.HIGH_RISK_PREFIX + "否（Permissive 模式，等同无 MAC）");
+            CollectorUtils.add(items, "SELinux 已启用（反射辅助）", String.valueOf(enabled));
+
+            if (fileEnforcing != null) {
+                // 与文件来源交叉比对
+                if (fileEnforcing == enforced) {
+                    CollectorUtils.add(items, "SELinux 已强制（反射辅助）",
+                        enforced ? "是（与 /sys 来源一致 ✓）" : "否（与 /sys 来源一致）");
+                } else {
+                    // 两个来源不一致，不得确定结论
+                    CollectorUtils.add(items, "SELinux 已强制（反射辅助，结果存疑）",
+                        "反射返回: " + enforced + "，与 /sys 文件来源不一致，"
+                        + "请以 adb shell getenforce 复核");
+                }
+            } else {
+                // 文件不可读，仅有反射来源，结论需谨慎
+                CollectorUtils.add(items, "SELinux 已强制（反射，仅供参考）",
+                    enforced ? "是（仅反射来源，建议 adb shell getenforce 复核）"
+                             : "否（仅反射来源，不能确认为 Permissive，请 adb shell getenforce 复核）");
+            }
         } catch (Exception e) {
             CollectorUtils.add(items, "SELinux 反射读取", "不支持: " + e.getMessage());
         }
 
-        // ASLR 状态（：内存保护）
-        String aslr = readFile("/proc/sys/kernel/randomize_va_space");
+        // ASLR 状态（内存保护）
+        String aslr = readFile("/proc/sys/kernel/randomize_va_space").trim();
         if (!aslr.isEmpty()) {
-            int val = parseIntSafe(aslr.trim());
-            CollectorUtils.add(items, "ASLR 级别",
-                val + (val == 2 ? "（完全随机化 ✓）"
-                     : val == 1 ? "（部分随机化）"
-                     : CollectorUtils.HIGH_RISK_PREFIX + "（已禁用，ROP/ret2libc 攻击更易实施）"));
+            try {
+                int val = Integer.parseInt(aslr);
+                CollectorUtils.add(items, "ASLR 级别",
+                    val + (val == 2 ? "（完全随机化 ✓）"
+                         : val == 1 ? "（部分随机化）"
+                         : CollectorUtils.HIGH_RISK_PREFIX + "（已禁用，ROP/ret2libc 攻击更易实施）"));
+            } catch (NumberFormatException e) {
+                CollectorUtils.add(items, "ASLR 级别", "无法读取/系统限制");
+            }
         }
     }
 
@@ -251,10 +292,20 @@ public class SecurityCollector implements InfoCollector {
                 String preview = readFilePreview(f[0], 80);
                 status = CollectorUtils.HIGH_RISK_PREFIX + "可读！内容: " + (preview.isEmpty() ? "(空)" : preview);
             } else {
-                status = "存在但无读权限（需 root）";
+                // 区分 /proc/net/ 与 /data/system/ 的限制原因
+                if (f[0].startsWith("/proc/net/")) {
+                    status = "存在但当前 App 无权限读取（Android 高版本系统限制，非 root 问题）";
+                } else {
+                    status = "存在但无读权限（需 root）";
+                }
             }
             CollectorUtils.add(items, f[1] + "\n" + f[0], status);
         }
+
+        CollectorUtils.add(items, "/proc/net 访问说明",
+            "/proc/net/tcp、udp、arp 在高版本 Android 中受限，\n"
+            + "普通 App 可通过 ConnectivityManager / NetworkInterface 获取部分网络状态，\n"
+            + "但不能完整读取内核连接表（系统设计限制，并非需要 root）");
 
         // /proc/cpuinfo 和 /proc/meminfo（无需权限，课件提到的系统信息）
         String cpuModel = readFirstMatchingLine("/proc/cpuinfo", "Hardware");
@@ -531,13 +582,18 @@ public class SecurityCollector implements InfoCollector {
             }
         }
 
+        CollectorUtils.add(items, "判断依据", "AndroidManifest 中 usesCleartextTraffic=true（FLAG_USES_CLEARTEXT_TRAFFIC）");
+        CollectorUtils.add(items, "重要说明",
+            "此结果为静态配置风险初筛，不代表当前正在传输明文敏感数据；\n"
+            + "可作为 MITM 攻击面评估依据，需进一步动态验证");
         CollectorUtils.add(items, "允许明文 HTTP 的用户应用",
             cleartextApps.isEmpty() ? "无（全部强制 HTTPS）"
-                : CollectorUtils.HIGH_RISK_PREFIX + cleartextApps.size() + " 个（存在 MITM 风险）");
+                : cleartextApps.size() + " 个（静态配置允许明文 HTTP，MITM 攻击面初筛）");
         int shown = 0;
         for (String app : cleartextApps) {
             if (shown++ >= MAX_CLEARTEXT_APP_SAMPLE) break;
-            CollectorUtils.add(items, "明文 HTTP 应用", CollectorUtils.HIGH_RISK_PREFIX + app);
+            CollectorUtils.add(items, "允许明文 HTTP（FLAG_USES_CLEARTEXT_TRAFFIC）",
+                CollectorUtils.HIGH_RISK_PREFIX + app);
         }
     }
 
@@ -557,7 +613,11 @@ public class SecurityCollector implements InfoCollector {
             return;
         }
 
-        CollectorUtils.add(items, "运行中进程总数", String.valueOf(pids.length));
+        CollectorUtils.add(items, "当前可见进程数", String.valueOf(pids.length));
+        CollectorUtils.add(items, "说明",
+            "Android 高版本限制普通 App 枚举其他进程；\n"
+            + "此处仅显示当前 App 可见进程（通常只有本 App 自身及少量系统进程），\n"
+            + "不代表设备运行中的进程总数。");
 
         // 挖矿 / 恶意进程关键词
         String[] suspiciousKeywords = {
@@ -593,7 +653,7 @@ public class SecurityCollector implements InfoCollector {
                 CollectorUtils.add(items, "⚠ 可疑进程", CollectorUtils.HIGH_RISK_PREFIX + s);
             }
         } else {
-            CollectorUtils.add(items, "可疑进程", "未检测到已知挖矿/Root工具进程");
+            CollectorUtils.add(items, "可疑进程检测", "在当前可见范围内未发现已知挖矿/Root工具进程");
         }
     }
 
@@ -800,16 +860,37 @@ public class SecurityCollector implements InfoCollector {
             String label,
             List<SignatureDetectionResult> bucket,
             int maxSamples,
-            boolean highRisk
+            boolean possiblyV1Only
     ) {
         int shown = 0;
         for (SignatureDetectionResult result : bucket) {
             if (shown++ >= maxSamples) break;
-            String value = "置信度:" + result.detectionConfidence
-                + " | " + result.detectionNote
-                + " | V4:" + (result.hasV4Block == null ? "unknown" : result.hasV4Block);
+            // 展示签名方案字段
+            StringBuilder value = new StringBuilder();
+            value.append("V1:").append(result.hasV1Signature ? "✓" : "✗");
+            value.append("  V2:").append(result.hasV2Block ? "✓" : "✗");
+            value.append("  V3:").append(result.hasV3Block ? "✓" : "✗");
+            value.append(" | 置信度:").append(result.detectionConfidence);
+            value.append(" | ").append(result.detectionNote);
+
+            // Janus 风险仅在 V1-only 且 API ≤ 26 时标为高危
+            boolean isJanusHighRisk = possiblyV1Only
+                && !result.hasV2Block && !result.hasV3Block
+                && Build.VERSION.SDK_INT <= 26;
+            String janusNote = "";
+            if (possiblyV1Only) {
+                if (isJanusHighRisk) {
+                    janusNote = "  ← Janus 高风险（V1-only + 当前系统 API≤26）";
+                } else if (result.hasV2Block || result.hasV3Block) {
+                    janusNote = "  ← 存在 V2/V3，Janus 典型风险较低";
+                } else {
+                    janusNote = "  ← 当前系统 API>" + Build.VERSION.SDK_INT + "，Janus 典型风险较低";
+                }
+            }
+
             CollectorUtils.add(items, label,
-                (highRisk ? CollectorUtils.HIGH_RISK_PREFIX : "") + result.packageName + " -> " + value);
+                (isJanusHighRisk ? CollectorUtils.HIGH_RISK_PREFIX : "")
+                + result.packageName + "\n" + value + janusNote);
         }
     }
 
