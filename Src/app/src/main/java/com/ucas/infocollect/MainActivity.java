@@ -16,6 +16,8 @@ import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.tabs.TabLayoutMediator;
 import com.ucas.infocollect.fragment.AppsFragment;
 import com.ucas.infocollect.fragment.DeviceFragment;
+import com.ucas.infocollect.fragment.LocationFragment;
+import com.ucas.infocollect.fragment.MediaFragment;
 import com.ucas.infocollect.fragment.NetworkFragment;
 import com.ucas.infocollect.fragment.PagerAdapter;
 import com.ucas.infocollect.fragment.SecurityFragment;
@@ -53,12 +55,14 @@ public class MainActivity extends AppCompatActivity {
 
     private List<PagerAdapter.TabSpec> buildTabSpecs() {
         List<PagerAdapter.TabSpec> tabSpecs = new ArrayList<>();
-        tabSpecs.add(new PagerAdapter.TabSpec("设备", DeviceFragment::new));
-        tabSpecs.add(new PagerAdapter.TabSpec("应用", AppsFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("设备",    DeviceFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("应用",    AppsFragment::new));
         tabSpecs.add(new PagerAdapter.TabSpec("传感器★", SensorFragment::new));
-        tabSpecs.add(new PagerAdapter.TabSpec("网络", NetworkFragment::new));
-        tabSpecs.add(new PagerAdapter.TabSpec("用户", UserFragment::new));
-        tabSpecs.add(new PagerAdapter.TabSpec("安全分析", SecurityFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("网络",    NetworkFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("用户",    UserFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("位置",    LocationFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("媒体",    MediaFragment::new));
+        tabSpecs.add(new PagerAdapter.TabSpec("安全分析",SecurityFragment::new));
         return tabSpecs;
     }
 
@@ -91,6 +95,9 @@ public class MainActivity extends AppCompatActivity {
             permList.add(Manifest.permission.READ_MEDIA_VIDEO);
         } else {
             permList.add(Manifest.permission.READ_EXTERNAL_STORAGE);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permList.add(Manifest.permission.ACCESS_MEDIA_LOCATION);
         }
         return permList;
     }

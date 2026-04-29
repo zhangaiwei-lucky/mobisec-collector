@@ -9,6 +9,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 
 import com.ucas.infocollect.model.InfoRow;
+import com.ucas.infocollect.model.RiskLevel;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -18,10 +19,15 @@ import java.util.Locale;
 
 /**
  * 已安装应用与使用情况收集器
+ *
+ * 展示内容：
+ * - 统计概览：用户/系统/高危权限应用数量
+ * - 用户应用列表（APP_ITEM 可点击 → 详情页）：显示图标 + 危险权限徽章
+ * - 应用使用统计（需 UsageStats 权限）
  */
 public class AppCollector implements InfoCollector {
 
-    private static final int MAX_USER_APP_DISPLAY = 30;
+    private static final int MAX_USER_APP_DISPLAY    = 60;
     private static final int MAX_USAGE_STATS_DISPLAY = 20;
 
     private static final String[] SENSITIVE_PERMISSIONS = {
@@ -43,7 +49,6 @@ public class AppCollector implements InfoCollector {
         PackageManager pm = context.getPackageManager();
         List<InfoRow> items = new ArrayList<>();
 
-        // 获取应用列表：优先用 GET_PERMISSIONS，失败则降级到 0
         List<PackageInfo> packages = new ArrayList<>();
         try {
             packages = pm.getInstalledPackages(PackageManager.GET_PERMISSIONS);
@@ -58,12 +63,11 @@ public class AppCollector implements InfoCollector {
 
         if (packages.isEmpty()) {
             CollectorUtils.add(items, "提示",
-                "未获取到应用列表。\nAndroid 11+ 需要 QUERY_ALL_PACKAGES 权限。\n" +
-                "当前只能看到本应用自身。");
+                "未获取到应用列表。\nAndroid 11+ 需要 QUERY_ALL_PACKAGES 权限。");
             return items;
         }
 
-        // ── 统计概览 ─────────────────────────────────────────────
+        // ── 统计概览 ─────────────────────────────────────────────────
         CollectorUtils.addHeader(items, "应用统计概览");
         int userApps = 0, sysApps = 0, highPermApps = 0;
         List<String> securityTools = new ArrayList<>();
@@ -79,54 +83,58 @@ public class AppCollector implements InfoCollector {
             }
         }
 
-        CollectorUtils.add(items, "用户应用数量",   String.valueOf(userApps));
-        CollectorUtils.add(items, "系统应用数量",   String.valueOf(sysApps));
+        CollectorUtils.add(items, "用户应用数量",       String.valueOf(userApps));
+        CollectorUtils.add(items, "系统应用数量",       String.valueOf(sysApps));
         CollectorUtils.add(items, "持有高危权限的应用", String.valueOf(highPermApps));
         CollectorUtils.add(items, "检测到的安全/分析工具",
             securityTools.isEmpty() ? "无"
                 : CollectorUtils.HIGH_RISK_PREFIX + String.join(", ", securityTools));
+        CollectorUtils.add(items, "提示", "点击下方应用可查看完整权限详情 →");
 
-        // ── 用户应用详情（最多30条）─────────────────────────────
-        CollectorUtils.addHeader(items, "用户安装应用（权限分析）");
+        // ── 用户应用列表（APP_ITEM 可点击）────────────────────────────
+        CollectorUtils.addHeader(items, "用户安装应用（点击查看权限详情）");
         int count = 0;
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             if (isSys) continue;
             if (count++ >= MAX_USER_APP_DISPLAY) {
-                CollectorUtils.add(items, "...", "还有更多应用（仅展示前" + MAX_USER_APP_DISPLAY + "条）");
+                CollectorUtils.add(items, "更多", "还有更多应用（仅展示前 " + MAX_USER_APP_DISPLAY + " 条）");
                 break;
             }
 
             String label = pkg.packageName;
-            try {
-                label = pm.getApplicationLabel(pkg.applicationInfo).toString();
-            } catch (Exception ignored) {}
+            try { label = pm.getApplicationLabel(pkg.applicationInfo).toString(); }
+            catch (Exception ignored) {}
 
-            StringBuilder perms = new StringBuilder();
-            if (pkg.requestedPermissions != null) {
-                for (String p : pkg.requestedPermissions) {
-                    for (String sp : SENSITIVE_PERMISSIONS) {
-                        if (p.contains(sp)) { perms.append(sp).append(" "); break; }
-                    }
-                }
-            }
+            int dangerousCount = countDangerousPerms(pkg);
+            RiskLevel risk = dangerousCount > 0 ? RiskLevel.HIGH : RiskLevel.NORMAL;
+            String permSummary = dangerousCount > 0
+                ? dangerousCount + " 项危险权限" : "无危险权限";
 
-            String val = "v" + (pkg.versionName != null ? pkg.versionName : "?");
-            if (perms.length() > 0)
-                val += "\n" + CollectorUtils.HIGH_RISK_PREFIX + "危险权限: " + perms.toString().trim();
-            CollectorUtils.add(items, label + "\n" + pkg.packageName, val);
+            CollectorUtils.addAppItem(items, label, permSummary, risk, pkg.packageName);
         }
 
-        // ── 应用使用统计 ──────────────────────────────────────────
+        // ── 应用使用统计 ──────────────────────────────────────────────
         CollectorUtils.addHeader(items, "应用使用统计（过去7天）");
         if (hasUsageStatsPerm(context)) {
             collectUsageStats(context, items);
         } else {
-            CollectorUtils.add(items, "未授权", "请在「设置→隐私→使用情况访问权限」中开启本应用的权限");
-            CollectorUtils.add(items, "数据价值", "可推断用户日程规律、常用应用、职业特征和生活习惯");
+            CollectorUtils.add(items, "未授权",
+                "请在「设置→隐私→使用情况访问权限」中开启本应用权限");
+            CollectorUtils.add(items, "数据价值",
+                "可推断用户日程规律、常用应用、职业特征和生活习惯");
         }
 
         return items;
+    }
+
+    private int countDangerousPerms(PackageInfo pkg) {
+        if (pkg.requestedPermissions == null) return 0;
+        int count = 0;
+        for (String p : pkg.requestedPermissions)
+            for (String sp : SENSITIVE_PERMISSIONS)
+                if (p.contains(sp)) { count++; break; }
+        return count;
     }
 
     private void collectUsageStats(Context context, List<InfoRow> items) {
@@ -135,7 +143,6 @@ public class AppCollector implements InfoCollector {
                 (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
             long now = System.currentTimeMillis();
             long weekAgo = now - 7L * 24 * 60 * 60 * 1000;
-
             List<UsageStats> stats =
                 usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, weekAgo, now);
 
@@ -144,23 +151,21 @@ public class AppCollector implements InfoCollector {
                 return;
             }
 
-            // 过滤掉 0 使用时长，按使用时长降序排列
             List<UsageStats> filtered = new ArrayList<>();
-            for (UsageStats s : stats) {
+            for (UsageStats s : stats)
                 if (s.getTotalTimeInForeground() > 0) filtered.add(s);
-            }
             filtered.sort((a, b) ->
                 Long.compare(b.getTotalTimeInForeground(), a.getTotalTimeInForeground()));
 
             CollectorUtils.add(items, "有记录的应用数", String.valueOf(filtered.size()));
-
             SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
             int limit = Math.min(filtered.size(), MAX_USAGE_STATS_DISPLAY);
             for (int i = 0; i < limit; i++) {
                 UsageStats s = filtered.get(i);
                 CollectorUtils.add(items, s.getPackageName(),
-                    CollectorUtils.HIGH_RISK_PREFIX + "使用 " + formatDuration(s.getTotalTimeInForeground())
-                    + " | 最后: " + sdf.format(new Date(s.getLastTimeUsed())));
+                    CollectorUtils.HIGH_RISK_PREFIX + "使用 "
+                        + formatDuration(s.getTotalTimeInForeground())
+                        + " | 最后: " + sdf.format(new Date(s.getLastTimeUsed())));
             }
         } catch (Exception e) {
             CollectorUtils.add(items, "读取失败", e.getMessage());
@@ -174,9 +179,7 @@ public class AppCollector implements InfoCollector {
             int mode = aom.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS,
                 android.os.Process.myUid(), context.getPackageName());
             return mode == AppOpsManager.MODE_ALLOWED;
-        } catch (Exception e) {
-            return false;
-        }
+        } catch (Exception e) { return false; }
     }
 
     private boolean hasSensitivePerm(PackageInfo pkg) {
@@ -194,5 +197,4 @@ public class AppCollector implements InfoCollector {
         if (min < 60) return min + "分" + (sec % 60) + "秒";
         return (min / 60) + "时" + (min % 60) + "分";
     }
-
 }

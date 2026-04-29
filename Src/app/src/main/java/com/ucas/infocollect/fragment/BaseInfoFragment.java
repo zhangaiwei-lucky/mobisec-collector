@@ -63,6 +63,7 @@ public abstract class BaseInfoFragment extends Fragment {
         recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
         adapter = new InfoAdapter(new java.util.ArrayList<>());
         recyclerView.setAdapter(adapter);
+        onAdapterReady(adapter);
 
         btnRefresh.setOnClickListener(v -> loadData());
 
@@ -123,6 +124,9 @@ public abstract class BaseInfoFragment extends Fragment {
     }
 
     protected abstract List<InfoRow> collectInfo();
+
+    /** 子类可重写此方法来配置 Adapter（如设置 click listener）*/
+    protected void onAdapterReady(@androidx.annotation.NonNull InfoAdapter adapter) {}
 
     @Override
     public void onDestroyView() {

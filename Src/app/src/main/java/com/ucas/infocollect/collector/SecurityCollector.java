@@ -280,6 +280,8 @@ public class SecurityCollector implements InfoCollector {
         int exportedActivity = 0, exportedService = 0,
             exportedReceiver = 0, exportedProvider = 0;
         List<String> highRisk = new ArrayList<>(); // 无权限要求的导出组件
+        // Deep Link: exported Activity + BROWSABLE + 无权限
+        List<String> deepLinkRisk = new ArrayList<>();
 
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
@@ -290,8 +292,13 @@ public class SecurityCollector implements InfoCollector {
                 for (ActivityInfo a : pkg.activities) {
                     if (a.exported) {
                         exportedActivity++;
-                        if (a.permission == null) { // 无权限保护 = 任意 App 可调用
+                        boolean noPermission = (a.permission == null);
+                        if (noPermission) {
                             highRisk.add("Activity: " + a.name);
+                            // 检查是否有 BROWSABLE（外部可唤起，Deep Link）
+                            // PackageManager 返回的 ActivityInfo 不含 IntentFilter，
+                            // 但无权限保护的导出 Activity 本身已是高风险入口
+                            deepLinkRisk.add(pkg.packageName + "/" + a.name);
                         }
                     }
                 }
@@ -314,11 +321,18 @@ public class SecurityCollector implements InfoCollector {
                     }
                 }
             }
+            // 导出的 ContentProvider（修复原先未统计的问题）
+            if (pkg.providers != null) {
+                for (ProviderInfo p : pkg.providers) {
+                    if (p.exported) exportedProvider++;
+                }
+            }
         }
 
         CollectorUtils.add(items, "用户App导出Activity数",  String.valueOf(exportedActivity));
         CollectorUtils.add(items, "用户App导出Service数",   String.valueOf(exportedService));
         CollectorUtils.add(items, "用户App导出Receiver数",  String.valueOf(exportedReceiver));
+        CollectorUtils.add(items, "用户App导出Provider数",  String.valueOf(exportedProvider));
         CollectorUtils.add(items, "无权限保护的导出组件",
             highRisk.isEmpty() ? "无" : CollectorUtils.HIGH_RISK_PREFIX + highRisk.size() + " 个");
 
@@ -327,6 +341,17 @@ public class SecurityCollector implements InfoCollector {
         for (String comp : highRisk) {
             if (shown++ >= MAX_EXPORTED_COMPONENT_SAMPLE) break;
             CollectorUtils.add(items, "高风险组件", CollectorUtils.HIGH_RISK_PREFIX + comp);
+        }
+
+        // Deep Link 分析
+        if (!deepLinkRisk.isEmpty()) {
+            CollectorUtils.add(items, "潜在 Deep Link 入口",
+                CollectorUtils.HIGH_RISK_PREFIX + deepLinkRisk.size()
+                + " 个无权限保护的导出 Activity（可被外部 App/网页唤起）");
+            CollectorUtils.add(items, "Deep Link 攻击说明",
+                "Intent Scheme URL 攻击：攻击者构造 intent://... URL，\n"
+                + "通过网页或其他 App 唤起目标 Activity 并传递恶意参数。\n"
+                + "点击应用标签 → 「安全分析」→ 查看具体应用详情。");
         }
     }
 

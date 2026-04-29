@@ -1,0 +1,4 @@
+#Tue Apr 28 23:04:00 CST 2026
+base.0=E\:\\Files\\UCAS\\Spring\\security\\Src\\app\\build\\intermediates\\dex\\debugAndroidTest\\mergeProjectDexDebugAndroidTest\\0\\classes.dex
+path.0=0/classes.dex
+renamed.0=classes.dex

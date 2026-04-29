@@ -5,11 +5,14 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.DhcpInfo;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.ProxyInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.text.format.Formatter;
 
 import androidx.core.content.ContextCompat;
@@ -69,6 +72,10 @@ public class NetworkCollector implements InfoCollector {
         // ── /proc/net 路由表（无需权限）──────────────────────────
         CollectorUtils.addHeader(items, "路由表（/proc/net/route）");
         readProcNetRoute(items);
+
+        // ── 网络安全环境（DNS / 代理 / VPN）──────────────────────
+        CollectorUtils.addHeader(items, "网络安全环境（DNS / 代理 / VPN）");
+        collectNetworkSecurityEnv(context, items);
 
         return items;
     }
@@ -278,6 +285,134 @@ public class NetworkCollector implements InfoCollector {
             CollectorUtils.addDegrade(items, "路由表读取",
                     CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * DNS / 代理 / VPN / Private DNS 检测
+     * 安全价值：
+     * - 自定义 DNS 可被用于 DNS 劫持（MITM 入口）
+     * - HTTP 代理存在 = 流量可能被截获（抓包环境）
+     * - VPN 存在 = 流量被路由至 VPN 服务器
+     */
+    private void collectNetworkSecurityEnv(Context context, List<InfoRow> items) {
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) {
+                CollectorUtils.add(items, "网络安全检测", "ConnectivityManager 不可用");
+                return;
+            }
+            Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork == null) {
+                CollectorUtils.add(items, "网络", "无活动网络");
+                return;
+            }
+
+            // VPN 检测
+            NetworkCapabilities caps = cm.getNetworkCapabilities(activeNetwork);
+            if (caps != null) {
+                boolean isVpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+                if (isVpn) {
+                    CollectorUtils.addHighRisk(items, "VPN 状态",
+                        "⚠ 检测到 VPN！流量被路由至 VPN 服务器，\n"
+                        + "存在流量被第三方监控的风险");
+                } else {
+                    CollectorUtils.add(items, "VPN 状态", "未检测到 VPN");
+                }
+
+                // 计费网络
+                boolean metered = !caps.hasCapability(
+                    NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+                CollectorUtils.add(items, "计费网络", metered ? "是（流量可能产生费用）" : "否");
+            }
+
+            // DNS 服务器（API 23+）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    LinkProperties lp = cm.getLinkProperties(activeNetwork);
+                    if (lp != null) {
+                        List<InetAddress> dnsServers = lp.getDnsServers();
+                        if (dnsServers.isEmpty()) {
+                            CollectorUtils.add(items, "DNS 服务器", "无（未获取到）");
+                        } else {
+                            StringBuilder sb = new StringBuilder();
+                            for (InetAddress dns : dnsServers) {
+                                sb.append(dns.getHostAddress()).append('\n');
+                            }
+                            boolean isSuspicious = dnsServers.stream().anyMatch(d -> {
+                                String ip = d.getHostAddress();
+                                return ip != null && !ip.startsWith("192.168")
+                                    && !ip.startsWith("10.") && !ip.startsWith("172.")
+                                    && !ip.equals("8.8.8.8") && !ip.equals("8.8.4.4")
+                                    && !ip.equals("114.114.114.114")
+                                    && !ip.equals("1.1.1.1") && !ip.equals("1.0.0.1");
+                            });
+                            if (isSuspicious) {
+                                CollectorUtils.addHighRisk(items, "DNS 服务器",
+                                    sb.toString().trim()
+                                    + "\n⚠ 非常见公共 DNS，可能存在 DNS 劫持风险");
+                            } else {
+                                CollectorUtils.add(items, "DNS 服务器",
+                                    sb.toString().trim());
+                            }
+                        }
+
+                        // HTTP 代理检测
+                        ProxyInfo proxy = lp.getHttpProxy();
+                        if (proxy != null && proxy.getHost() != null
+                                && !proxy.getHost().isEmpty()) {
+                            CollectorUtils.addHighRisk(items, "HTTP 代理",
+                                "⚠ 检测到代理: " + proxy.getHost() + ":" + proxy.getPort()
+                                + "\n可能处于抓包/流量审计环境！");
+                        } else {
+                            CollectorUtils.add(items, "HTTP 代理", "未检测到代理");
+                        }
+
+                        // Private DNS (DoT/DoH) - Android 9+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            String privateDns = lp.getPrivateDnsServerName();
+                            if (privateDns != null && !privateDns.isEmpty()) {
+                                CollectorUtils.add(items, "Private DNS (DoT)",
+                                    privateDns + "\n（DNS over TLS，加密 DNS 查询）");
+                            } else {
+                                boolean usingPrivate = lp.isPrivateDnsActive();
+                                CollectorUtils.add(items, "Private DNS",
+                                    usingPrivate ? "已启用（系统默认）" : "未启用");
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    CollectorUtils.add(items, "DNS/代理检测", "读取失败: " + e.getClass().getSimpleName());
+                }
+            }
+
+            // 全局代理检测（System.getProperty）
+            String httpProxy = System.getProperty("http.proxyHost");
+            String httpPort  = System.getProperty("http.proxyPort");
+            if (httpProxy != null && !httpProxy.isEmpty()) {
+                CollectorUtils.addHighRisk(items, "系统 HTTP 代理属性",
+                    "⚠ " + httpProxy + ":" + httpPort
+                    + "\n流量可能被代理服务器拦截");
+            } else {
+                CollectorUtils.add(items, "系统 HTTP 代理属性", "未设置");
+            }
+
+        } catch (Exception e) {
+            CollectorUtils.add(items, "网络安全检测失败",
+                e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        // MITM 风险提示
+        CollectorUtils.addHeader(items, "网络攻击面说明");
+        CollectorUtils.add(items, "DNS 劫持",
+            "恶意 DNS 服务器可将正常域名解析到攻击者 IP，\n"
+            + "结合伪造 HTTPS 证书实施 MITM 攻击");
+        CollectorUtils.add(items, "HTTP 代理",
+            "在代理环境下明文 HTTP 流量可被完整记录，\n"
+            + "HTTPS 若未做证书绑定(Certificate Pinning)同样可被解密");
+        CollectorUtils.add(items, "VPN 风险",
+            "不可信 VPN 可记录所有流量，\n"
+            + "免费 VPN 常见数据收集和出售用户行为的问题");
     }
 
     /** 将小端十六进制 IP 转为点分十进制 */

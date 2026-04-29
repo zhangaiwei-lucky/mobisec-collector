@@ -1,0 +1,204 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="com.ucas.infocollect"
+4    android:versionCode="1"
+5    android:versionName="1.0" >
+6
+7    <uses-sdk
+8        android:minSdkVersion="26"
+9        android:targetSdkVersion="34" />
+10
+11    <!-- 无需用户授权的权限 -->
+12    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+12-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:6:5-78
+12-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:6:22-76
+13    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+13-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:7:5-75
+13-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:7:22-73
+14    <uses-permission android:name="android.permission.INTERNET" />
+14-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:8:5-66
+14-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:8:22-64
+15
+16    <!-- 需要用户授权的普通权限 -->
+17    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+17-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:11:5-74
+17-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:11:22-72
+18    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+18-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:12:5-70
+18-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:12:22-68
+19
+20    <!-- Android 11+ 枚举所有已安装应用 -->
+21    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+21-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:15:5-16:52
+21-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:15:22-74
+22
+23    <!-- 危险权限 -->
+24    <uses-permission android:name="android.permission.READ_CONTACTS" />
+24-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:19:5-71
+24-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:19:22-69
+25    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+25-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:20:5-71
+25-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:20:22-69
+26    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+26-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:21:5-78
+26-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:21:22-76
+27    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+27-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:22:5-80
+27-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:22:22-78
+28    <uses-permission
+28-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:23:5-24:37
+29        android:name="android.permission.READ_EXTERNAL_STORAGE"
+29-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:23:22-77
+30        android:maxSdkVersion="32" />
+30-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:24:9-35
+31    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+31-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:25:5-75
+31-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:25:22-73
+32    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+32-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:26:5-74
+32-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:26:22-72
+33
+34    <!-- 应用使用统计（需在设置中手动授权） -->
+35    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+35-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:29:5-30:46
+35-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:29:22-75
+36
+37    <!-- Android 10+ EXIF GPS 读取（需用户授权） -->
+38    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+38-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:33:5-79
+38-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:33:22-77
+39
+40    <!-- Android 11+ 包可见性：声明后即可枚举所有包（配合 QUERY_ALL_PACKAGES） -->
+41    <queries>
+41-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:36:5-40:15
+42        <intent>
+42-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:37:9-39:18
+43            <action android:name="android.intent.action.MAIN" />
+43-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:38:13-64
+43-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:38:21-62
+44        </intent>
+45    </queries>
+46
+47    <permission
+47-->[androidx.core:core:1.12.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\3e998e169696e9da2df8e686400da5ea\transformed\core-1.12.0\AndroidManifest.xml:22:5-24:47
+48        android:name="com.ucas.infocollect.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+48-->[androidx.core:core:1.12.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\3e998e169696e9da2df8e686400da5ea\transformed\core-1.12.0\AndroidManifest.xml:23:9-81
+49        android:protectionLevel="signature" />
+49-->[androidx.core:core:1.12.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\3e998e169696e9da2df8e686400da5ea\transformed\core-1.12.0\AndroidManifest.xml:24:9-44
+50
+51    <uses-permission android:name="com.ucas.infocollect.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" />
+51-->[androidx.core:core:1.12.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\3e998e169696e9da2df8e686400da5ea\transformed\core-1.12.0\AndroidManifest.xml:26:5-97
+51-->[androidx.core:core:1.12.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\3e998e169696e9da2df8e686400da5ea\transformed\core-1.12.0\AndroidManifest.xml:26:22-94
+52
+53    <application
+53-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:42:5-64:19
+54        android:allowBackup="true"
+54-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:43:9-35
+55        android:appComponentFactory="androidx.core.app.CoreComponentFactory"
+55-->[androidx.core:core:1.12.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\3e998e169696e9da2df8e686400da5ea\transformed\core-1.12.0\AndroidManifest.xml:28:18-86
+56        android:debuggable="true"
+57        android:extractNativeLibs="false"
+58        android:icon="@drawable/ic_launcher_background"
+58-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:44:9-56
+59        android:label="@string/app_name"
+59-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:46:9-41
+60        android:roundIcon="@drawable/ic_launcher_background"
+60-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:45:9-61
+61        android:supportsRtl="true"
+61-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:47:9-35
+62        android:theme="@style/Theme.InfoCollect" >
+62-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:48:9-49
+63        <activity
+63-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:50:9-57:20
+64            android:name="com.ucas.infocollect.MainActivity"
+64-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:51:13-41
+65            android:exported="true" >
+65-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:52:13-36
+66            <intent-filter>
+66-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:53:13-56:29
+67                <action android:name="android.intent.action.MAIN" />
+67-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:38:13-64
+67-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:38:21-62
+68
+69                <category android:name="android.intent.category.LAUNCHER" />
+69-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:55:17-76
+69-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:55:27-74
+70            </intent-filter>
+71        </activity>
+72        <activity
+72-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:59:9-62:57
+73            android:name="com.ucas.infocollect.AppDetailActivity"
+73-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:60:13-46
+74            android:exported="false"
+74-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:61:13-37
+75            android:parentActivityName="com.ucas.infocollect.MainActivity" />
+75-->E:\Files\UCAS\Spring\security\Src\app\src\main\AndroidManifest.xml:62:13-55
+76
+77        <provider
+77-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:24:9-32:20
+78            android:name="androidx.startup.InitializationProvider"
+78-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:25:13-67
+79            android:authorities="com.ucas.infocollect.androidx-startup"
+79-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:26:13-68
+80            android:exported="false" >
+80-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:27:13-37
+81            <meta-data
+81-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:29:13-31:52
+82                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+82-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:30:17-75
+83                android:value="androidx.startup" />
+83-->[androidx.emoji2:emoji2:1.2.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\f101b5aa09efe06357e76a0207277e8a\transformed\emoji2-1.2.0\AndroidManifest.xml:31:17-49
+84            <meta-data
+84-->[androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\Luckyxixi\.gradle\caches\transforms-3\119faaa543d82b40b4461acf99eff7b2\transformed\lifecycle-process-2.6.1\AndroidManifest.xml:29:13-31:52
+85                android:name="androidx.lifecycle.ProcessLifecycleInitializer"
+85-->[androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\Luckyxixi\.gradle\caches\transforms-3\119faaa543d82b40b4461acf99eff7b2\transformed\lifecycle-process-2.6.1\AndroidManifest.xml:30:17-78
+86                android:value="androidx.startup" />
+86-->[androidx.lifecycle:lifecycle-process:2.6.1] C:\Users\Luckyxixi\.gradle\caches\transforms-3\119faaa543d82b40b4461acf99eff7b2\transformed\lifecycle-process-2.6.1\AndroidManifest.xml:31:17-49
+87            <meta-data
+87-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:29:13-31:52
+88                android:name="androidx.profileinstaller.ProfileInstallerInitializer"
+88-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:30:17-85
+89                android:value="androidx.startup" />
+89-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:31:17-49
+90        </provider>
+91
+92        <receiver
+92-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:34:9-52:20
+93            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+93-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:35:13-76
+94            android:directBootAware="false"
+94-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:36:13-44
+95            android:enabled="true"
+95-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:37:13-35
+96            android:exported="true"
+96-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:38:13-36
+97            android:permission="android.permission.DUMP" >
+97-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:39:13-57
+98            <intent-filter>
+98-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:40:13-42:29
+99                <action android:name="androidx.profileinstaller.action.INSTALL_PROFILE" />
+99-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:41:17-91
+99-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:41:25-88
+100            </intent-filter>
+101            <intent-filter>
+101-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:43:13-45:29
+102                <action android:name="androidx.profileinstaller.action.SKIP_FILE" />
+102-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:44:17-85
+102-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:44:25-82
+103            </intent-filter>
+104            <intent-filter>
+104-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:46:13-48:29
+105                <action android:name="androidx.profileinstaller.action.SAVE_PROFILE" />
+105-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:47:17-88
+105-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:47:25-85
+106            </intent-filter>
+107            <intent-filter>
+107-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:49:13-51:29
+108                <action android:name="androidx.profileinstaller.action.BENCHMARK_OPERATION" />
+108-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:50:17-95
+108-->[androidx.profileinstaller:profileinstaller:1.3.0] C:\Users\Luckyxixi\.gradle\caches\transforms-3\6040b010d93caf97c9ee8226bdfb69bd\transformed\profileinstaller-1.3.0\AndroidManifest.xml:50:25-92
+109            </intent-filter>
+110        </receiver>
+111    </application>
+112
+113</manifest>

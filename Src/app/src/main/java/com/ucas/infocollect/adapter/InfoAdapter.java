@@ -1,11 +1,15 @@
 package com.ucas.infocollect.adapter;
 
+import android.content.pm.PackageManager;
+import android.graphics.drawable.Drawable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.RecyclerView;
@@ -18,36 +22,47 @@ import com.ucas.infocollect.model.RowType;
 import java.util.List;
 
 /**
- * 通用键值对信息列表适配器
- * 支持强类型行模型，避免 key 冲突导致 Diff 异常。
+ * 通用信息列表适配器
+ * 支持 HEADER / ITEM / APP_ITEM 三种行类型。
+ * APP_ITEM 显示应用图标、名称、包名、权限徽章，支持点击跳转详情。
  */
 public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
-    private static final int TYPE_HEADER = 0;
-    private static final int TYPE_ITEM   = 1;
+    private static final int TYPE_HEADER   = 0;
+    private static final int TYPE_ITEM     = 1;
+    private static final int TYPE_APP_ITEM = 2;
+
+    public interface OnItemClickListener {
+        void onAppItemClick(String packageName);
+    }
 
     private final List<InfoRow> items = new java.util.ArrayList<>();
+    @Nullable private OnItemClickListener clickListener;
 
     public InfoAdapter(List<InfoRow> initialItems) {
         setHasStableIds(true);
         if (initialItems != null) this.items.addAll(initialItems);
     }
 
+    public void setOnItemClickListener(@Nullable OnItemClickListener listener) {
+        this.clickListener = listener;
+    }
+
     public void updateData(List<InfoRow> newItems) {
-        List<InfoRow> safeNewItems =
-            newItems != null ? newItems : new java.util.ArrayList<>();
+        List<InfoRow> safeNew = newItems != null ? newItems : new java.util.ArrayList<>();
         List<InfoRow> oldItems = new java.util.ArrayList<>(items);
-        DiffUtil.DiffResult diffResult =
-            DiffUtil.calculateDiff(new InfoDiffCallback(oldItems, safeNewItems));
+        DiffUtil.DiffResult diff = DiffUtil.calculateDiff(new InfoDiffCallback(oldItems, safeNew));
         items.clear();
-        items.addAll(safeNewItems);
-        diffResult.dispatchUpdatesTo(this);
+        items.addAll(safeNew);
+        diff.dispatchUpdatesTo(this);
     }
 
     @Override
     public int getItemViewType(int position) {
-        return items.get(position).getType() == RowType.HEADER
-            ? TYPE_HEADER : TYPE_ITEM;
+        RowType type = items.get(position).getType();
+        if (type == RowType.HEADER)   return TYPE_HEADER;
+        if (type == RowType.APP_ITEM) return TYPE_APP_ITEM;
+        return TYPE_ITEM;
     }
 
     @Override
@@ -60,11 +75,11 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     public RecyclerView.ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         LayoutInflater inflater = LayoutInflater.from(parent.getContext());
         if (viewType == TYPE_HEADER) {
-            View v = inflater.inflate(R.layout.item_header, parent, false);
-            return new HeaderHolder(v);
+            return new HeaderHolder(inflater.inflate(R.layout.item_header, parent, false));
+        } else if (viewType == TYPE_APP_ITEM) {
+            return new AppHolder(inflater.inflate(R.layout.item_app, parent, false));
         } else {
-            View v = inflater.inflate(R.layout.item_info, parent, false);
-            return new ItemHolder(v);
+            return new ItemHolder(inflater.inflate(R.layout.item_info, parent, false));
         }
     }
 
@@ -73,30 +88,65 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         InfoRow entry = items.get(position);
         if (holder instanceof HeaderHolder) {
             ((HeaderHolder) holder).title.setText(entry.getKey());
+        } else if (holder instanceof AppHolder) {
+            bindAppHolder((AppHolder) holder, entry);
         } else {
-            ItemHolder h = (ItemHolder) holder;
-            h.key.setText(entry.getKey());
-            h.value.setText(entry.getValue());
-            // 高敏感度信息用红色标注
-            if (entry.getRiskLevel() == RiskLevel.HIGH) {
-                h.value.setTextColor(ContextCompat.getColor(h.value.getContext(), R.color.risk_high_text));
-            } else {
-                h.value.setTextColor(ContextCompat.getColor(h.value.getContext(), R.color.info_text_primary));
-            }
+            bindItemHolder((ItemHolder) holder, entry);
         }
+    }
+
+    private void bindItemHolder(ItemHolder h, InfoRow entry) {
+        h.key.setText(entry.getKey());
+        h.value.setText(entry.getValue());
+        if (entry.getRiskLevel() == RiskLevel.HIGH) {
+            h.value.setTextColor(ContextCompat.getColor(h.value.getContext(), R.color.risk_high_text));
+        } else {
+            h.value.setTextColor(ContextCompat.getColor(h.value.getContext(), R.color.info_text_primary));
+        }
+    }
+
+    private void bindAppHolder(AppHolder h, InfoRow entry) {
+        String packageName = entry.getPayload();
+        h.name.setText(entry.getKey());
+        h.pkg.setText(packageName != null ? packageName : "");
+
+        // 加载应用图标
+        if (packageName != null) {
+            try {
+                PackageManager pm = h.itemView.getContext().getPackageManager();
+                Drawable icon = pm.getApplicationIcon(packageName);
+                h.icon.setImageDrawable(icon);
+            } catch (Exception e) {
+                h.icon.setImageResource(android.R.drawable.sym_def_app_icon);
+            }
+        } else {
+            h.icon.setImageResource(android.R.drawable.sym_def_app_icon);
+        }
+
+        // 权限徽章
+        if (entry.getRiskLevel() == RiskLevel.HIGH) {
+            h.permBadge.setVisibility(View.VISIBLE);
+            h.permBadge.setText(entry.getValue());
+        } else {
+            h.permBadge.setVisibility(View.GONE);
+        }
+
+        // 点击跳转详情
+        h.itemView.setOnClickListener(v -> {
+            if (clickListener != null && packageName != null) {
+                clickListener.onAppItemClick(packageName);
+            }
+        });
     }
 
     @Override
-    public int getItemCount() {
-        return items.size();
-    }
+    public int getItemCount() { return items.size(); }
+
+    // ─── ViewHolder 内部类 ──────────────────────────────────────────
 
     static class HeaderHolder extends RecyclerView.ViewHolder {
         TextView title;
-        HeaderHolder(View v) {
-            super(v);
-            title = v.findViewById(R.id.header_title);
-        }
+        HeaderHolder(View v) { super(v); title = v.findViewById(R.id.header_title); }
     }
 
     static class ItemHolder extends RecyclerView.ViewHolder {
@@ -105,6 +155,18 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             super(v);
             key   = v.findViewById(R.id.info_key);
             value = v.findViewById(R.id.info_value);
+        }
+    }
+
+    static class AppHolder extends RecyclerView.ViewHolder {
+        ImageView icon;
+        TextView  name, pkg, permBadge;
+        AppHolder(View v) {
+            super(v);
+            icon      = v.findViewById(R.id.app_icon);
+            name      = v.findViewById(R.id.app_name);
+            pkg       = v.findViewById(R.id.app_package);
+            permBadge = v.findViewById(R.id.perm_badge);
         }
     }
 }

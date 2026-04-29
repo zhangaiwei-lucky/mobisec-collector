@@ -40,6 +40,7 @@ public class InfoDiffCallback extends DiffUtil.Callback {
         return oldItem.getType() == newItem.getType()
             && Objects.equals(oldItem.getKey(), newItem.getKey())
             && Objects.equals(oldItem.getValue(), newItem.getValue())
-            && oldItem.getRiskLevel() == newItem.getRiskLevel();
+            && oldItem.getRiskLevel() == newItem.getRiskLevel()
+            && Objects.equals(oldItem.getPayload(), newItem.getPayload());
     }
 }

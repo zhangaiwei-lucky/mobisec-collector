@@ -29,6 +29,9 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions"/>
 
+    <!-- Android 10+ EXIF GPS 读取（需用户授权）-->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
+
     <!-- Android 11+ 包可见性：声明后即可枚举所有包（配合 QUERY_ALL_PACKAGES）-->
     <queries>
         <intent>
@@ -52,6 +55,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".AppDetailActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"/>
 
     </application>
 </manifest>

@@ -75,6 +75,12 @@ public final class CollectorUtils {
         }
     }
 
+    /** 添加可点击的 APP_ITEM 行（应用列表使用） */
+    public static void addAppItem(List<InfoRow> list, String appName, String permSummary,
+                                  RiskLevel risk, String packageName) {
+        list.add(InfoRow.appItem(appName, permSummary, risk, packageName));
+    }
+
     public static void addDegrade(List<InfoRow> list, String key, DegradeReason reason, String detail) {
         String explain = detail != null && !detail.isEmpty() ? detail : "无额外信息";
         add(list, key, "原因类别: " + reason.name() + " - " + reason.desc + "；" + explain);

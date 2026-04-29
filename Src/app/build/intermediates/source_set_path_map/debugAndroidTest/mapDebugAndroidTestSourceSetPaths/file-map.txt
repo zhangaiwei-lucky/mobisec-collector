@@ -1,0 +1,4 @@
+com.ucas.infocollect.test.app-androidTest-0 E:\Files\UCAS\Spring\security\Src\app\build\generated\res\resValues\androidTest\debug
+com.ucas.infocollect.test.app-mergeDebugAndroidTestResources-1 E:\Files\UCAS\Spring\security\Src\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
+com.ucas.infocollect.test.app-mergeDebugAndroidTestResources-2 E:\Files\UCAS\Spring\security\Src\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
+com.ucas.infocollect.test.app-debugAndroidTest-3 E:\Files\UCAS\Spring\security\Src\app\build\intermediates\merged_res\debugAndroidTest\mergeDebugAndroidTestResources
