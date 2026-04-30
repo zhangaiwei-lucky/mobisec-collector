@@ -21,7 +21,7 @@ public final class DegradeEntry {
 
     /** 降级原因分类 */
     @NonNull
-    public final CollectorUtils.DegradeReason reason;
+    public final DegradeReason reason;
 
     /** 降级补充说明，含异常类型或拒绝权限名等可溯源信息 */
     @NonNull
@@ -29,7 +29,7 @@ public final class DegradeEntry {
 
     public DegradeEntry(
             @NonNull final String field,
-            @NonNull final CollectorUtils.DegradeReason reason,
+            @NonNull final DegradeReason reason,
             @NonNull final String detail) {
         this.field  = Objects.requireNonNull(field,  "field must not be null");
         this.reason = Objects.requireNonNull(reason, "reason must not be null");

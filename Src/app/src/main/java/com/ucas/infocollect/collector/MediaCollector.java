@@ -2,236 +2,234 @@ package com.ucas.infocollect.collector;
 
 import android.Manifest;
 import android.content.ContentResolver;
-import android.content.Context;
-import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.MediaStore;
 
-import androidx.core.content.ContextCompat;
+import androidx.annotation.NonNull;
 import androidx.exifinterface.media.ExifInterface;
-
-import com.ucas.infocollect.model.InfoRow;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * 媒体文件元数据收集器
+ * 媒体文件元数据收集器（V2 无 Context 版）。
  *
- * 不读取图片/视频内容，只读取元数据（MediaStore + EXIF），
- * 展示媒体数据的隐私泄露潜力：
- * - 照片数量、拍摄时间分布
- * - EXIF 中的 GPS 坐标（拍摄位置）
- * - 相机型号、软件信息
- * - 视频/音频统计
+ * <p>不读取图片/视频内容，只读取元数据（MediaStore + EXIF），
+ * 展示媒体数据的隐私泄露潜力：</p>
+ * <ul>
+ *   <li>照片数量、拍摄时间分布</li>
+ *   <li>EXIF 中的 GPS 坐标（拍摄位置）</li>
+ *   <li>相机型号、软件信息</li>
+ *   <li>视频/音频统计</li>
+ * </ul>
  */
-public class MediaCollector implements InfoCollector {
+public class MediaCollector implements InfoCollectorV2 {
 
     private static final int MAX_EXIF_SAMPLE = 5;
 
+    @NonNull
     @Override
-    public List<InfoRow> collect(Context context) {
-        List<InfoRow> items = new ArrayList<>();
-
-        // 检查权限
-        boolean hasPerm = hasMediaPermission(context);
-        CollectorUtils.addHeader(items, "媒体存储权限状态");
+    public List<String> getRequiredPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            boolean img = ContextCompat.checkSelfPermission(context,
-                Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED;
-            boolean vid = ContextCompat.checkSelfPermission(context,
-                Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED;
-            CollectorUtils.add(items, "READ_MEDIA_IMAGES", img ? "✓ 已授予" : "✗ 未授予");
-            CollectorUtils.add(items, "READ_MEDIA_VIDEO",  vid ? "✓ 已授予" : "✗ 未授予");
+            return Arrays.asList(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO
+            );
         } else {
-            boolean storage = ContextCompat.checkSelfPermission(context,
-                Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
-            CollectorUtils.add(items, "READ_EXTERNAL_STORAGE", storage ? "✓ 已授予" : "✗ 未授予");
+            return Collections.singletonList(Manifest.permission.READ_EXTERNAL_STORAGE);
         }
+    }
 
-        if (!hasPerm) {
-            CollectorUtils.addHeader(items, "媒体数据");
-            CollectorUtils.add(items, "无法读取媒体元数据",
-                "未获得存储/媒体权限 —— Android 权限保护机制生效。\n"
-                + "攻击者同样无法读取用户照片和视频元数据。");
-            addMediaPrivacyAnalysis(items);
-            return items;
+    @NonNull
+    @Override
+    public CollectionResult collect(@NonNull final SystemEnvironment env) {
+        final CollectionResult.Builder result = CollectionResult.builder();
+        final ContentResolver cr = env.getContentResolver();
+
+        // ── 权限状态说明 ────────────────────────────────────────────
+        result.addHeader("媒体存储权限状态");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            result.add("READ_MEDIA_IMAGES", "（权限声明已在 getRequiredPermissions()，运行时由系统授权弹窗管控）");
+            result.add("READ_MEDIA_VIDEO",  "（权限声明已在 getRequiredPermissions()，运行时由系统授权弹窗管控）");
+        } else {
+            result.add("READ_EXTERNAL_STORAGE", "（权限声明已在 getRequiredPermissions()，运行时由系统授权弹窗管控）");
         }
 
         // ── 图片统计 ─────────────────────────────────────────────────
-        CollectorUtils.addHeader(items, "图片统计（MediaStore）");
-        collectImageStats(context, items);
+        result.addHeader("图片统计（MediaStore）");
+        collectImageStats(cr, result);
 
         // ── EXIF GPS 分析 ─────────────────────────────────────────────
-        CollectorUtils.addHeader(items, "EXIF 元数据分析（前 " + MAX_EXIF_SAMPLE + " 张含 GPS 的照片）");
-        collectExifGps(context, items);
+        result.addHeader("EXIF 元数据分析（前 " + MAX_EXIF_SAMPLE + " 张含 GPS 的照片）");
+        collectExifGps(cr, result);
 
         // ── 视频统计 ─────────────────────────────────────────────────
-        CollectorUtils.addHeader(items, "视频统计（MediaStore）");
-        collectVideoStats(context, items);
+        result.addHeader("视频统计（MediaStore）");
+        collectVideoStats(cr, result);
 
-        addMediaPrivacyAnalysis(items);
-        return items;
+        addMediaPrivacyAnalysis(result);
+        return result.build();
     }
 
-    private boolean hasMediaPermission(Context context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            return ContextCompat.checkSelfPermission(context,
-                Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-                || ContextCompat.checkSelfPermission(context,
-                Manifest.permission.READ_MEDIA_VIDEO) == PackageManager.PERMISSION_GRANTED;
-        } else {
-            return ContextCompat.checkSelfPermission(context,
-                Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
-        }
-    }
-
-    private void collectImageStats(Context context, List<InfoRow> items) {
-        Uri uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-        String[] proj = {
+    private void collectImageStats(
+            @NonNull final ContentResolver         cr,
+            @NonNull final CollectionResult.Builder result) {
+        final Uri uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        final String[] proj = {
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DATE_TAKEN,
             MediaStore.Images.Media.SIZE,
             MediaStore.Images.Media.MIME_TYPE
         };
-        try (Cursor c = context.getContentResolver().query(
+        try (final Cursor c = cr.query(
                 uri, proj, null, null,
                 MediaStore.Images.Media.DATE_TAKEN + " DESC")) {
             if (c == null) {
-                CollectorUtils.add(items, "图片", "MediaStore 返回 null");
+                result.addDegrade("图片", DegradeReason.NO_DATA, "MediaStore 返回 null");
                 return;
             }
-            int total = c.getCount();
-            CollectorUtils.addHighRisk(items, "图片总数", total + " 张");
-
+            final int total = c.getCount();
+            result.addHighRisk("图片总数", total + " 张");
             if (total == 0) return;
 
-            // 最新一张的时间
             if (c.moveToFirst()) {
-                long dateTaken = c.getLong(1);
+                final long dateTaken = c.getLong(1);
                 if (dateTaken > 0) {
-                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
-                    CollectorUtils.addHighRisk(items, "最新照片时间",
-                        sdf.format(new Date(dateTaken)));
+                    final SimpleDateFormat sdf =
+                        new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
+                    result.addHighRisk("最新照片时间", sdf.format(new Date(dateTaken)));
                 }
             }
 
-            // 按年份分组统计
-            int[] yearBuckets = new int[10]; // 最近10年
-            int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
+            final int[] yearBuckets = new int[10];
+            final int currentYear   = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
             long totalSize = 0;
             c.moveToFirst();
             do {
-                long dateTaken = c.getLong(1);
+                final long dateTaken = c.getLong(1);
                 totalSize += c.getLong(2);
                 if (dateTaken > 0) {
-                    java.util.Calendar cal = java.util.Calendar.getInstance();
+                    final java.util.Calendar cal = java.util.Calendar.getInstance();
                     cal.setTimeInMillis(dateTaken);
-                    int year = cal.get(java.util.Calendar.YEAR);
-                    int diff = currentYear - year;
+                    final int diff = currentYear - cal.get(java.util.Calendar.YEAR);
                     if (diff >= 0 && diff < 10) yearBuckets[diff]++;
                 }
             } while (c.moveToNext());
 
-            CollectorUtils.add(items, "图片总大小",
+            result.add("图片总大小",
                 String.format(Locale.getDefault(), "%.1f MB", totalSize / 1024.0 / 1024.0));
 
-            StringBuilder sb = new StringBuilder();
+            final StringBuilder sb = new StringBuilder();
             for (int i = 0; i < 5; i++) {
                 if (yearBuckets[i] > 0)
                     sb.append(currentYear - i).append("年: ").append(yearBuckets[i]).append("张  ");
             }
-            if (sb.length() > 0)
-                CollectorUtils.add(items, "年份分布", sb.toString().trim());
+            if (sb.length() > 0) result.add("年份分布", sb.toString().trim());
 
-        } catch (Exception e) {
-            CollectorUtils.add(items, "图片统计失败", e.getClass().getSimpleName());
+        } catch (final SecurityException e) {
+            result.addDegrade("图片统计", DegradeReason.PERMISSION_DENIED,
+                "缺少存储/媒体权限");
+        } catch (final Exception e) {
+            result.addDegrade("图片统计", DegradeReason.READ_FAILED,
+                e.getClass().getSimpleName());
         }
     }
 
-    private void collectExifGps(Context context, List<InfoRow> items) {
-        Uri uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-        String[] proj = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME };
-        ContentResolver cr = context.getContentResolver();
+    private void collectExifGps(
+            @NonNull final ContentResolver         cr,
+            @NonNull final CollectionResult.Builder result) {
+        final Uri uri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+        final String[] proj = {
+            MediaStore.Images.Media._ID,
+            MediaStore.Images.Media.DISPLAY_NAME
+        };
 
-        try (Cursor c = cr.query(uri, proj, null, null,
+        try (final Cursor c = cr.query(uri, proj, null, null,
                 MediaStore.Images.Media.DATE_TAKEN + " DESC")) {
             if (c == null || c.getCount() == 0) {
-                CollectorUtils.add(items, "EXIF", "无图片数据");
+                result.addDegrade("EXIF", DegradeReason.NO_DATA, "无图片数据");
                 return;
             }
 
-            int gpsFound = 0;
-            int scanned  = 0;
-            CollectorUtils.add(items, "说明",
+            result.add("说明",
                 "EXIF GPS 坐标记录了照片拍摄地点，泄露后可还原用户活动轨迹。\n"
                 + "Android 10+ MediaStore 已自动从 EXIF 中剔除 GPS（隐私保护）。\n"
                 + "以下为实际可读取到的 GPS 元数据（Android 9 及以下设备影响更大）。");
 
+            int gpsFound = 0;
+            int scanned  = 0;
             while (c.moveToNext() && gpsFound < MAX_EXIF_SAMPLE) {
                 scanned++;
-                if (scanned > 200) break; // 最多扫描 200 张
+                if (scanned > 200) break;
 
-                long id   = c.getLong(0);
-                String name = c.getString(1);
-                Uri imgUri = Uri.withAppendedPath(
+                final long   id    = c.getLong(0);
+                final String name  = c.getString(1);
+                final Uri imgUri   = Uri.withAppendedPath(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI, String.valueOf(id));
-                try (InputStream is = cr.openInputStream(imgUri)) {
+                try (final InputStream is = cr.openInputStream(imgUri)) {
                     if (is == null) continue;
-                    ExifInterface exif = new ExifInterface(is);
-                    float[] latLon = new float[2];
+                    final ExifInterface exif    = new ExifInterface(is);
+                    final float[]       latLon  = new float[2];
                     if (exif.getLatLong(latLon)) {
                         gpsFound++;
-                        String cam = exif.getAttribute(ExifInterface.TAG_MAKE);
-                        String model = exif.getAttribute(ExifInterface.TAG_MODEL);
-                        String dateTime = exif.getAttribute(ExifInterface.TAG_DATETIME);
-                        CollectorUtils.addHighRisk(items, "GPS照片: " + name,
+                        final String cam      = exif.getAttribute(ExifInterface.TAG_MAKE);
+                        final String model    = exif.getAttribute(ExifInterface.TAG_MODEL);
+                        final String dateTime = exif.getAttribute(ExifInterface.TAG_DATETIME);
+                        result.addHighRisk("GPS照片: " + name,
                             String.format(Locale.getDefault(),
                                 "纬度:%.5f° 经度:%.5f°\n拍摄:%s  相机:%s %s",
                                 latLon[0], latLon[1],
                                 dateTime != null ? dateTime : "未知",
-                                cam != null ? cam : "",
+                                cam   != null ? cam   : "",
                                 model != null ? model : ""));
                     }
-                } catch (IOException ignored) {}
+                } catch (final IOException ignored) {}
             }
 
             if (gpsFound == 0) {
-                CollectorUtils.add(items, "未找到含 GPS 的照片",
+                result.add("未找到含 GPS 的照片",
                     "已扫描 " + scanned + " 张，未读取到 GPS 坐标。\n"
                     + "（Android 10+ 已自动剔除 EXIF GPS —— 有效保护用户位置隐私）");
             } else {
-                CollectorUtils.addHighRisk(items, "含 GPS 照片数",
+                result.addHighRisk("含 GPS 照片数",
                     "发现 " + gpsFound + " 张含 GPS 坐标的照片（已扫描前 " + scanned + " 张）");
             }
-        } catch (Exception e) {
-            CollectorUtils.add(items, "EXIF 扫描失败", e.getClass().getSimpleName());
+        } catch (final SecurityException e) {
+            result.addDegrade("EXIF 扫描", DegradeReason.PERMISSION_DENIED,
+                "缺少存储/媒体权限");
+        } catch (final Exception e) {
+            result.addDegrade("EXIF 扫描", DegradeReason.READ_FAILED,
+                e.getClass().getSimpleName());
         }
     }
 
-    private void collectVideoStats(Context context, List<InfoRow> items) {
-        Uri uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
-        String[] proj = {
+    private void collectVideoStats(
+            @NonNull final ContentResolver         cr,
+            @NonNull final CollectionResult.Builder result) {
+        final Uri uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
+        final String[] proj = {
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DATE_TAKEN,
             MediaStore.Video.Media.DURATION,
             MediaStore.Video.Media.SIZE
         };
-        try (Cursor c = context.getContentResolver().query(
-                uri, proj, null, null, MediaStore.Video.Media.DATE_TAKEN + " DESC")) {
+        try (final Cursor c = cr.query(
+                uri, proj, null, null,
+                MediaStore.Video.Media.DATE_TAKEN + " DESC")) {
             if (c == null) {
-                CollectorUtils.add(items, "视频", "MediaStore 返回 null");
+                result.addDegrade("视频", DegradeReason.NO_DATA, "MediaStore 返回 null");
                 return;
             }
-            int total = c.getCount();
-            CollectorUtils.addHighRisk(items, "视频总数", total + " 个");
+            final int total = c.getCount();
+            result.addHighRisk("视频总数", total + " 个");
             if (total == 0) return;
 
             long totalSize = 0;
@@ -240,45 +238,46 @@ public class MediaCollector implements InfoCollector {
                 totalSize += c.getLong(3);
                 totalDur  += c.getLong(2);
             }
-            CollectorUtils.add(items, "视频总大小",
+            result.add("视频总大小",
                 String.format(Locale.getDefault(), "%.1f MB", totalSize / 1024.0 / 1024.0));
-            CollectorUtils.add(items, "视频总时长",
-                formatDuration(totalDur));
+            result.add("视频总时长", formatDuration(totalDur));
 
             if (c.moveToFirst()) {
-                long dateTaken = c.getLong(1);
+                final long dateTaken = c.getLong(1);
                 if (dateTaken > 0) {
-                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
-                    CollectorUtils.addHighRisk(items, "最新视频时间",
-                        sdf.format(new Date(dateTaken)));
+                    final SimpleDateFormat sdf =
+                        new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault());
+                    result.addHighRisk("最新视频时间", sdf.format(new Date(dateTaken)));
                 }
             }
-        } catch (Exception e) {
-            CollectorUtils.add(items, "视频统计失败", e.getClass().getSimpleName());
+        } catch (final SecurityException e) {
+            result.addDegrade("视频统计", DegradeReason.PERMISSION_DENIED,
+                "缺少存储/媒体权限");
+        } catch (final Exception e) {
+            result.addDegrade("视频统计", DegradeReason.READ_FAILED,
+                e.getClass().getSimpleName());
         }
     }
 
-    private void addMediaPrivacyAnalysis(List<InfoRow> items) {
-        CollectorUtils.addHeader(items, "媒体隐私价值分析");
-        CollectorUtils.addHighRisk(items, "EXIF GPS 风险",
-            "照片 EXIF 含拍摄 GPS 坐标 → 暴露用户历史位置轨迹");
-        CollectorUtils.add(items, "相机型号",
-            "EXIF TAG_MODEL 可辅助设备指纹（区分不同用户）");
-        CollectorUtils.add(items, "拍摄时间",
-            "时间戳分布可分析用户作息规律");
-        CollectorUtils.add(items, "视频内容",
+    private void addMediaPrivacyAnalysis(
+            @NonNull final CollectionResult.Builder result) {
+        result.addHeader("媒体隐私价值分析");
+        result.addHighRisk("EXIF GPS 风险",   "照片 EXIF 含拍摄 GPS 坐标 → 暴露用户历史位置轨迹");
+        result.add("相机型号",               "EXIF TAG_MODEL 可辅助设备指纹（区分不同用户）");
+        result.add("拍摄时间",               "时间戳分布可分析用户作息规律");
+        result.add("视频内容",
             "视频缩略图 / 元数据可能包含用户脸部、家庭环境等敏感信息");
-        CollectorUtils.add(items, "Android 保护机制",
+        result.add("Android 保护机制",
             "Android 10+ 自动从 MediaStore 查询结果中剔除 GPS EXIF，\n"
             + "需要 ACCESS_MEDIA_LOCATION 权限才能读取含位置的照片。");
     }
 
-    private String formatDuration(long ms) {
-        long sec  = ms / 1000;
-        long min  = sec / 60;
-        long hour = min / 60;
+    private String formatDuration(final long ms) {
+        final long sec  = ms / 1000;
+        final long min  = sec / 60;
+        final long hour = min / 60;
         if (hour > 0) return hour + "时" + (min % 60) + "分";
-        if (min  > 0) return min + "分" + (sec % 60) + "秒";
+        if (min  > 0) return min  + "分" + (sec % 60) + "秒";
         return sec + "秒";
     }
 }

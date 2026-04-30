@@ -108,13 +108,31 @@ public final class CollectionResult {
         }
 
         /**
+         * 添加可点击的应用列表行（APP_ITEM 类型），供 {@code AppsFragment} 使用。
+         *
+         * @param appName     应用显示名称
+         * @param permSummary 权限摘要文字（如 "3 项危险权限"）
+         * @param risk        风险等级，控制行的高亮颜色
+         * @param packageName 应用包名，用于点击跳转至详情页
+         */
+        @NonNull
+        public Builder addAppItem(
+                @NonNull final String   appName,
+                @NonNull final String   permSummary,
+                @NonNull final RiskLevel risk,
+                @NonNull final String   packageName) {
+            rows.add(InfoRow.appItem(appName, permSummary, risk, packageName));
+            return this;
+        }
+
+        /**
          * 记录一条降级事件。
          * 降级不产生任何 {@link InfoRow}，仅追加到 {@link #degrades} 列表。
          */
         @NonNull
         public Builder addDegrade(
                 @NonNull final String field,
-                @NonNull final CollectorUtils.DegradeReason reason,
+                @NonNull final DegradeReason reason,
                 @NonNull final String detail) {
             degrades.add(new DegradeEntry(field, reason, detail));
             return this;

@@ -1,5 +1,6 @@
 package com.ucas.infocollect.collector;
 
+import android.content.ContentResolver;
 import android.content.pm.PackageManager;
 
 import androidx.annotation.NonNull;
@@ -59,4 +60,23 @@ public interface SystemEnvironment {
      */
     @NonNull
     PackageManager getPackageManager();
+
+    /**
+     * 提供 {@link ContentResolver} 实例，用于访问 MediaStore、联系人、
+     * 通话记录及 {@code Settings} 等 ContentProvider 数据源。
+     *
+     * <p>Collector 层使用此方法获取 ContentResolver，禁止绕过此接口
+     * 直接访问 {@code android.content.Context}。</p>
+     */
+    @NonNull
+    ContentResolver getContentResolver();
+
+    /**
+     * 返回宿主应用的包名（{@code applicationId}）。
+     *
+     * <p>用于 {@code AppOpsManager.checkOpNoThrow(op, uid, packageName)}
+     * 等需要包名参数的系统 API 调用。</p>
+     */
+    @NonNull
+    String getPackageName();
 }

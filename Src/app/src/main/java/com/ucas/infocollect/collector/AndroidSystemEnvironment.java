@@ -1,6 +1,7 @@
 package com.ucas.infocollect.collector;
 
 import android.annotation.SuppressLint;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.provider.Settings;
@@ -73,5 +74,17 @@ public final class AndroidSystemEnvironment implements SystemEnvironment {
     @Override
     public PackageManager getPackageManager() {
         return appContext.getPackageManager();
+    }
+
+    @NonNull
+    @Override
+    public ContentResolver getContentResolver() {
+        return appContext.getContentResolver();
+    }
+
+    @NonNull
+    @Override
+    public String getPackageName() {
+        return appContext.getPackageName();
     }
 }
