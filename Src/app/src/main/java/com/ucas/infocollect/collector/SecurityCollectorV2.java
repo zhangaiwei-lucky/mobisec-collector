@@ -11,7 +11,10 @@ import com.ucas.infocollect.collector.security.SecurityScanContext;
 import com.ucas.infocollect.collector.security.SecurityScanner;
 import com.ucas.infocollect.collector.security.Severity;
 import com.ucas.infocollect.collector.security.scanner.ApkSignatureScanner;
+import com.ucas.infocollect.collector.security.scanner.DangerousProviderScanner;
+import com.ucas.infocollect.collector.security.scanner.ExportedComponentScanner;
 import com.ucas.infocollect.collector.security.scanner.KernelSecurityScanner;
+import com.ucas.infocollect.collector.security.scanner.SuspiciousProcessScanner;
 import com.ucas.infocollect.model.InfoRow;
 import com.ucas.infocollect.model.RiskLevel;
 
@@ -94,19 +97,19 @@ public final class SecurityCollectorV2 implements InfoCollectorV2 {
         this.scanners = Collections.unmodifiableList(new ArrayList<>(scanners));
     }
 
-    /** 构建默认扫描器注册表。Phase 2 新扫描器在此追加，编排器逻辑不变。 */
+    /** 构建默认扫描器注册表。Phase 3 新扫描器在此追加，编排器逻辑不变。 */
     @NonNull
     private static List<SecurityScanner> buildScannerRegistry() {
         return Arrays.asList(
-                new KernelSecurityScanner(),
-                new ApkSignatureScanner()
-                // Phase 2 占位：
+                new KernelSecurityScanner(),        // 内核安全状态（SELinux / ASLR / perf_event）
+                new ApkSignatureScanner(),          // APK 签名方案 / Janus CVE-2017-13156
+                new ExportedComponentScanner(),     // 无保护的导出 Activity / Service / Receiver
+                new DangerousProviderScanner(),     // 开放 ContentProvider / URI 授权滥用
+                new SuspiciousProcessScanner()      // /proc 进程嗅探 / Root 工具 / 挖矿木马
+                // Phase 3 占位：
                 // new SensitiveFileScanner(),
-                // new ExportedComponentScanner(),
-                // new DangerousProviderScanner(),
                 // new OverPrivilegeScanner(),
-                // new CleartextTrafficScanner(),
-                // new SuspiciousProcessScanner()
+                // new CleartextTrafficScanner()
         );
     }
 
@@ -278,8 +281,9 @@ public final class SecurityCollectorV2 implements InfoCollectorV2 {
      * 未在此列表中的 attribute 仅供机器处理，不在 UI 中显示。
      */
     private static final String[][] DISPLAY_ATTRS = {
-            // 通用
+            // 通用包名（ApkSignatureScanner 使用 "package"，新扫描器使用 "packageName"）
             {"package",                "包名"},
+            {"packageName",            "包名"},
             {"cve",                    "CVE"},
             {"confidence",             "置信度"},
             {"detection_confidence",   "置信度"},
@@ -289,7 +293,7 @@ public final class SecurityCollectorV2 implements InfoCollectorV2 {
             {"has_v3",                 "V3 Block"},
             {"device_api",             "设备 API"},
             {"janus_vulnerable_os",    "Janus 受影响设备"},
-            // 扫描摘要
+            // APK 签名 / 组件扫描 摘要
             {"total_user_apps",        "扫描应用总数"},
             {"modern_signed_count",    "现代签名数量"},
             {"v1_only_count",          "V1-only 数量"},
@@ -301,6 +305,25 @@ public final class SecurityCollectorV2 implements InfoCollectorV2 {
             {"recommended_value",      "建议值"},
             {"source",                 "检测来源"},
             {"prop_value",             "属性值"},
+            // 导出组件扫描（ExportedComponentScanner）
+            {"componentName",          "组件名"},
+            {"componentType",          "组件类型"},
+            {"vulnerable_activities",  "脆弱 Activity"},
+            {"vulnerable_services",    "脆弱 Service"},
+            {"vulnerable_receivers",   "脆弱 Receiver"},
+            {"total_vulnerable",       "脆弱组件总数"},
+            // 高危 ContentProvider 扫描（DangerousProviderScanner）
+            {"authority",              "Provider Authority"},
+            {"grantUriPermissions",    "URI 授权"},
+            {"open_providers",         "完全开放 Provider"},
+            {"grant_uri_providers",    "URI 授权开放 Provider"},
+            {"total_dangerous",        "高危 Provider 总数"},
+            // 可疑进程扫描（SuspiciousProcessScanner）
+            {"pid",                    "进程 PID"},
+            {"cmdline",                "命令行"},
+            {"matchedKeyword",         "匹配关键词"},
+            {"scanned_pid_count",      "扫描进程数"},
+            {"suspicious_count",       "可疑进程数"},
     };
 
     // ─────────────────────────────────────────────────────────────────────────
