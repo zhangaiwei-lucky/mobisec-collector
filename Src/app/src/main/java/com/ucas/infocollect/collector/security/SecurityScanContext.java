@@ -3,6 +3,7 @@ package com.ucas.infocollect.collector.security;
 import android.content.pm.PackageManager;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.ucas.infocollect.collector.SystemEnvironment;
 
@@ -33,4 +34,20 @@ public interface SecurityScanContext extends SystemEnvironment {
      */
     @NonNull
     PackageManager getPackageManager();
+
+    /**
+     * 读取 Linux 虚拟文件系统中的纯文本文件（{@code /proc/*}、{@code /sys/*} 等）。
+     *
+     * <p>此方法专为内核安全状态探测设计，目标路径均为 procfs / sysfs 中的
+     * 只读伪文件。实现类不应尝试读取 {@code /data/} 等用户数据分区路径，
+     * 调用方亦不得将返回内容直接用于安全决策，应先进行格式校验。</p>
+     *
+     * <p>读取的文件通常以换行符结尾；实现类应对返回值执行 {@code trim()}，
+     * 调用方收到结果后即可直接进行字符串比较，无需再次清理。</p>
+     *
+     * @param path 绝对路径，例如 {@code "/sys/fs/selinux/enforce"}
+     * @return 文件全文内容（已 trim）；若文件不存在、无读权限或 I/O 异常则返回 {@code null}
+     */
+    @Nullable
+    String readSystemFile(@NonNull String path);
 }
