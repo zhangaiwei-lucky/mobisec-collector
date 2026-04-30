@@ -1,222 +1,314 @@
 package com.ucas.infocollect.collector;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
 import android.app.ActivityManager;
-import android.content.Context;
-import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Environment;
 import android.os.StatFs;
 import android.provider.Settings;
 import android.telephony.TelephonyManager;
-import android.util.DisplayMetrics;
 import android.view.WindowManager;
+import android.util.DisplayMetrics;
 
-import androidx.core.content.ContextCompat;
-
-import com.ucas.infocollect.model.InfoRow;
+import androidx.annotation.NonNull;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
- * 设备与系统信息收集器
+ * 设备与系统信息收集器（Phase 1 架构纯化版）。
  *
- * 覆盖范围：
- * - 硬件标识（型号、序列号、Android ID）
- * - 系统版本与安全补丁
- * - CPU / 内存 / 存储规格
- * - 屏幕参数
- * - 运营商与 IMEI（需 READ_PHONE_STATE）
- * - Root / 开发者选项状态
+ * <p><b>重构变更（相较原版）：</b></p>
+ * <ul>
+ *   <li>彻底移除 {@code android.content.Context}：所有系统资源通过
+ *       {@link SystemEnvironment} 注入，类内无任何 Context 引用。</li>
+ *   <li>权限抽离：{@code ContextCompat.checkSelfPermission} 调用已删除，
+ *       所需权限通过 {@link #getRequiredPermissions()} 显式声明，由应用层统一申请。</li>
+ *   <li>消除静默降级：所有原 {@code CollectorUtils.addDegrade()} 调用均替换为
+ *       {@code result.addDegrade()}，降级事件写入 {@link CollectionResult#getDegrades()}
+ *       而非混入数据行。</li>
+ *   <li>采集逻辑本身（读取方式、字段名称、风险标记）与原版保持一致。</li>
+ * </ul>
+ *
+ * <p>覆盖范围：</p>
+ * <ul>
+ *   <li>硬件标识（品牌、型号、序列号、Android ID）</li>
+ *   <li>系统版本与安全补丁</li>
+ *   <li>CPU / 内存 / 存储规格</li>
+ *   <li>屏幕参数</li>
+ *   <li>运营商与 IMEI（需 READ_PHONE_STATE）</li>
+ *   <li>Root / 开发者选项 / ADB 状态</li>
+ * </ul>
  */
-public class DeviceCollector implements InfoCollector {
+public final class DeviceCollector implements InfoCollectorV2 {
 
+    private static final List<String> REQUIRED_PERMISSIONS =
+            Collections.unmodifiableList(Arrays.asList(
+                    Manifest.permission.READ_PHONE_STATE
+            ));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 契约实现
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @NonNull
     @Override
-    public List<InfoRow> collect(Context context) {
-        List<InfoRow> items = new ArrayList<>();
-
-        // ── 基本硬件信息（无需权限）──────────────────────────────
-        CollectorUtils.addHeader(items, "基本设备信息");
-        CollectorUtils.add(items, "品牌",        Build.BRAND);
-        CollectorUtils.add(items, "厂商",        Build.MANUFACTURER);
-        CollectorUtils.add(items, "型号",        Build.MODEL);
-        CollectorUtils.add(items, "设备名",      Build.DEVICE);
-        CollectorUtils.add(items, "产品名",      Build.PRODUCT);
-        CollectorUtils.add(items, "硬件版本",    Build.HARDWARE);
-        CollectorUtils.add(items, "主板",        Build.BOARD);
-
-        // ── Android 版本与安全信息（无需权限）──────────────────────
-        CollectorUtils.addHeader(items, "系统版本与安全");
-        CollectorUtils.add(items, "Android 版本", Build.VERSION.RELEASE);
-        CollectorUtils.add(items, "API Level",    String.valueOf(Build.VERSION.SDK_INT));
-        CollectorUtils.add(items, "安全补丁日期", Build.VERSION.SECURITY_PATCH);
-        CollectorUtils.add(items, "Build 指纹",   Build.FINGERPRINT);
-        CollectorUtils.add(items, "Build 类型",   Build.TYPE);       // user/userdebug/eng
-        CollectorUtils.add(items, "Build 标签",   Build.TAGS);       // release-keys/test-keys
-
-        // ── Android ID（可用于设备追踪，无需权限）──────────────────
-        CollectorUtils.addHeader(items, "设备标识符");
-        @SuppressLint("HardwareIds")
-        String androidId = Settings.Secure.getString(
-            context.getContentResolver(), Settings.Secure.ANDROID_ID);
-        CollectorUtils.add(items, "Android ID", CollectorUtils.HIGH_RISK_PREFIX + androidId);  // 设备唯一 ID，可追踪用户
-
-        // IMEI（需 READ_PHONE_STATE 权限）
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
-                == PackageManager.PERMISSION_GRANTED) {
-            try {
-                TelephonyManager tm = CollectorUtils.safeService(
-                    context,
-                    Context.TELEPHONY_SERVICE,
-                    TelephonyManager.class,
-                    items,
-                    "电话服务",
-                    "TelephonyManager 不可用");
-                if (tm == null) {
-                    CollectorUtils.addDegrade(items, "电话信息",
-                        CollectorUtils.DegradeReason.SERVICE_UNAVAILABLE, "无法读取 IMEI/运营商信息");
-                } else {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    String imei = tm.getImei();
-                    CollectorUtils.addHighRisk(items, "IMEI", imei != null ? imei : "不可用");
-                }
-                CollectorUtils.add(items, "运营商",       tm.getNetworkOperatorName());
-                String simCountryIso = tm.getSimCountryIso();
-                CollectorUtils.safeAdd(items, "SIM 国家代码",
-                    simCountryIso != null ? simCountryIso.toUpperCase() : null);
-                CollectorUtils.addHighRisk(items, "电话号码", tm.getLine1Number());
-                CollectorUtils.add(items, "设备 SoftwareVersion", tm.getDeviceSoftwareVersion());
-                }
-            } catch (Exception e) {
-                CollectorUtils.addDegrade(items, "电话信息",
-                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
-            }
-        } else {
-            CollectorUtils.addDegrade(items, "IMEI / 运营商",
-                CollectorUtils.DegradeReason.PERMISSION_DENIED, "未授予 READ_PHONE_STATE 权限");
-        }
-
-        // ── CPU 信息（无需权限，读取 /proc/cpuinfo）──────────────────
-        CollectorUtils.addHeader(items, "处理器信息");
-        CollectorUtils.add(items, "CPU ABI(s)",    Build.SUPPORTED_ABIS[0]);
-        CollectorUtils.add(items, "CPU 核心数",    String.valueOf(Runtime.getRuntime().availableProcessors()));
-        String cpuHardware = readCpuInfo("Hardware");
-        String cpuModel    = readCpuInfo("model name");
-        CollectorUtils.add(items, "CPU Hardware", cpuHardware.isEmpty() ? "N/A" : cpuHardware);
-        CollectorUtils.add(items, "CPU 型号",     cpuModel.isEmpty()    ? "N/A" : cpuModel);
-
-        // ── 内存信息（无需权限）──────────────────────────────────
-        CollectorUtils.addHeader(items, "内存与存储");
-        ActivityManager am = CollectorUtils.safeService(
-            context,
-            Context.ACTIVITY_SERVICE,
-            ActivityManager.class,
-            items,
-            "内存信息",
-            "ActivityManager 不可用");
-        if (am != null) {
-            try {
-                ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
-                am.getMemoryInfo(memInfo);
-                CollectorUtils.add(items, "总内存",     formatBytes(memInfo.totalMem));
-                CollectorUtils.add(items, "可用内存",   formatBytes(memInfo.availMem));
-                CollectorUtils.add(items, "低内存阈值", formatBytes(memInfo.threshold));
-                CollectorUtils.add(items, "当前低内存", String.valueOf(memInfo.lowMemory));
-            } catch (Exception e) {
-                CollectorUtils.addDegrade(items, "内存信息",
-                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
-            }
-        }
-
-        // 内部存储
-        StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
-        long blockSize  = stat.getBlockSizeLong();
-        long totalBlocks = stat.getBlockCountLong();
-        long availBlocks = stat.getAvailableBlocksLong();
-        CollectorUtils.add(items, "内部存储总量", formatBytes(blockSize * totalBlocks));
-        CollectorUtils.add(items, "内部存储可用", formatBytes(blockSize * availBlocks));
-
-        // ── 屏幕信息（无需权限）──────────────────────────────────
-        CollectorUtils.addHeader(items, "屏幕参数");
-        WindowManager wm = CollectorUtils.safeService(
-            context,
-            Context.WINDOW_SERVICE,
-            WindowManager.class,
-            items,
-            "屏幕参数",
-            "WindowManager 不可用");
-        if (wm != null) {
-            try {
-                DisplayMetrics dm = new DisplayMetrics();
-                wm.getDefaultDisplay().getRealMetrics(dm);
-                CollectorUtils.add(items, "分辨率",   dm.widthPixels + " x " + dm.heightPixels);
-                CollectorUtils.add(items, "DPI",     String.valueOf(dm.densityDpi));
-                CollectorUtils.add(items, "密度",    String.valueOf(dm.density));
-                CollectorUtils.add(items, "刷新率",  String.valueOf(wm.getDefaultDisplay().getRefreshRate()) + " Hz");
-            } catch (Exception e) {
-                CollectorUtils.addDegrade(items, "屏幕参数",
-                    CollectorUtils.DegradeReason.READ_FAILED, "读取失败: " + e.getClass().getSimpleName());
-            }
-        }
-
-        // ── Root / 安全状态（无需权限）───────────────────────────
-        CollectorUtils.addHeader(items, "安全状态");
-        CollectorUtils.add(items, "是否 Root",         isRooted() ? CollectorUtils.HIGH_RISK_PREFIX + "是" : "否");
-        CollectorUtils.add(items, "开发者选项",
-            Settings.Global.getInt(context.getContentResolver(),
-                Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1
-            ? CollectorUtils.HIGH_RISK_PREFIX + "已开启" : "未开启");
-        CollectorUtils.add(items, "ADB 调试",
-            Settings.Global.getInt(context.getContentResolver(),
-                Settings.Global.ADB_ENABLED, 0) == 1
-            ? CollectorUtils.HIGH_RISK_PREFIX + "已开启" : "未开启");
-        CollectorUtils.add(items, "安装未知来源",
-            Settings.Secure.getInt(context.getContentResolver(),
-                Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1
-            ? CollectorUtils.HIGH_RISK_PREFIX + "已允许" : "不允许");
-
-        return items;
+    public List<String> getRequiredPermissions() {
+        return REQUIRED_PERMISSIONS;
     }
 
-    /** 检测设备是否已 Root（检查常见的 su 路径）*/
+    @NonNull
+    @Override
+    public CollectionResult collect(@NonNull final SystemEnvironment env) {
+        final CollectionResult.Builder result = CollectionResult.builder();
+
+        collectBasicInfo(result);
+        collectSystemVersion(result);
+        collectIdentifiers(env, result);
+        collectCpuInfo(result);
+        collectMemoryAndStorage(env, result);
+        collectDisplayInfo(env, result);
+        collectSecurityStatus(env, result);
+
+        return result.build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 分段采集（私有，各自职责单一）
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private void collectBasicInfo(@NonNull final CollectionResult.Builder result) {
+        result.addHeader("基本设备信息");
+        result.add("品牌",     Build.BRAND);
+        result.add("厂商",     Build.MANUFACTURER);
+        result.add("型号",     Build.MODEL);
+        result.add("设备名",   Build.DEVICE);
+        result.add("产品名",   Build.PRODUCT);
+        result.add("硬件版本", Build.HARDWARE);
+        result.add("主板",     Build.BOARD);
+    }
+
+    private void collectSystemVersion(@NonNull final CollectionResult.Builder result) {
+        result.addHeader("系统版本与安全");
+        result.add("Android 版本", Build.VERSION.RELEASE);
+        result.add("API Level",    String.valueOf(Build.VERSION.SDK_INT));
+        result.add("安全补丁日期", Build.VERSION.SECURITY_PATCH);
+        result.add("Build 指纹",   Build.FINGERPRINT);
+        result.add("Build 类型",   Build.TYPE);
+        result.add("Build 标签",   Build.TAGS);
+    }
+
+    /**
+     * 采集设备标识符。
+     *
+     * <p>IMEI 读取不再内部检查权限：若权限未授予，Android 会抛出
+     * {@link SecurityException}，此处捕获并记录为降级事件。</p>
+     */
+    private void collectIdentifiers(
+            @NonNull final SystemEnvironment env,
+            @NonNull final CollectionResult.Builder result) {
+
+        result.addHeader("设备标识符");
+
+        // Android ID 无需权限，但可追踪用户，标记为高风险
+        final String androidId = env.getSecureStringSetting(Settings.Secure.ANDROID_ID);
+        result.addHighRisk("Android ID", androidId);
+
+        final TelephonyManager tm = env.getSystemService(TelephonyManager.class);
+        if (tm == null) {
+            result.addDegrade(
+                    "电话信息",
+                    CollectorUtils.DegradeReason.SERVICE_UNAVAILABLE,
+                    "TelephonyManager 不可用");
+            return;
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                result.addHighRisk("IMEI", tm.getImei());
+            }
+            result.add("运营商", tm.getNetworkOperatorName());
+            final String simIso = tm.getSimCountryIso();
+            result.add("SIM 国家代码", simIso != null ? simIso.toUpperCase() : "N/A");
+            result.addHighRisk("电话号码", tm.getLine1Number());
+            result.addNullable("设备 SoftwareVersion", tm.getDeviceSoftwareVersion());
+
+        } catch (final SecurityException e) {
+            // READ_PHONE_STATE 未在运行时授予（权限申请由应用层负责）
+            result.addDegrade(
+                    "IMEI / 运营商",
+                    CollectorUtils.DegradeReason.PERMISSION_DENIED,
+                    "运行时权限未授予: READ_PHONE_STATE");
+        } catch (final Exception e) {
+            result.addDegrade(
+                    "电话信息",
+                    CollectorUtils.DegradeReason.READ_FAILED,
+                    "读取失败: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectCpuInfo(@NonNull final CollectionResult.Builder result) {
+        result.addHeader("处理器信息");
+        result.add("CPU ABI(s)",  Build.SUPPORTED_ABIS[0]);
+        result.add("CPU 核心数",  String.valueOf(Runtime.getRuntime().availableProcessors()));
+        final String hardware = readCpuInfo("Hardware");
+        final String model    = readCpuInfo("model name");
+        result.add("CPU Hardware", hardware.isEmpty() ? "N/A" : hardware);
+        result.add("CPU 型号",     model.isEmpty()    ? "N/A" : model);
+    }
+
+    private void collectMemoryAndStorage(
+            @NonNull final SystemEnvironment env,
+            @NonNull final CollectionResult.Builder result) {
+
+        result.addHeader("内存与存储");
+
+        final ActivityManager am = env.getSystemService(ActivityManager.class);
+        if (am == null) {
+            result.addDegrade(
+                    "内存信息",
+                    CollectorUtils.DegradeReason.SERVICE_UNAVAILABLE,
+                    "ActivityManager 不可用");
+        } else {
+            try {
+                final ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
+                am.getMemoryInfo(memInfo);
+                result.add("总内存",     formatBytes(memInfo.totalMem));
+                result.add("可用内存",   formatBytes(memInfo.availMem));
+                result.add("低内存阈值", formatBytes(memInfo.threshold));
+                result.add("当前低内存", String.valueOf(memInfo.lowMemory));
+            } catch (final Exception e) {
+                result.addDegrade(
+                        "内存信息",
+                        CollectorUtils.DegradeReason.READ_FAILED,
+                        "读取失败: " + e.getClass().getSimpleName());
+            }
+        }
+
+        try {
+            final StatFs stat      = new StatFs(Environment.getDataDirectory().getPath());
+            final long   blockSize = stat.getBlockSizeLong();
+            result.add("内部存储总量", formatBytes(blockSize * stat.getBlockCountLong()));
+            result.add("内部存储可用", formatBytes(blockSize * stat.getAvailableBlocksLong()));
+        } catch (final Exception e) {
+            result.addDegrade(
+                    "内部存储",
+                    CollectorUtils.DegradeReason.READ_FAILED,
+                    "读取失败: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectDisplayInfo(
+            @NonNull final SystemEnvironment env,
+            @NonNull final CollectionResult.Builder result) {
+
+        result.addHeader("屏幕参数");
+
+        final WindowManager wm = env.getSystemService(WindowManager.class);
+        if (wm == null) {
+            result.addDegrade(
+                    "屏幕参数",
+                    CollectorUtils.DegradeReason.SERVICE_UNAVAILABLE,
+                    "WindowManager 不可用");
+            return;
+        }
+
+        try {
+            final DisplayMetrics dm = new DisplayMetrics();
+            wm.getDefaultDisplay().getRealMetrics(dm);
+            result.add("分辨率", dm.widthPixels + " x " + dm.heightPixels);
+            result.add("DPI",   String.valueOf(dm.densityDpi));
+            result.add("密度",  String.valueOf(dm.density));
+            result.add("刷新率", wm.getDefaultDisplay().getRefreshRate() + " Hz");
+        } catch (final Exception e) {
+            result.addDegrade(
+                    "屏幕参数",
+                    CollectorUtils.DegradeReason.READ_FAILED,
+                    "读取失败: " + e.getClass().getSimpleName());
+        }
+    }
+
+    private void collectSecurityStatus(
+            @NonNull final SystemEnvironment env,
+            @NonNull final CollectionResult.Builder result) {
+
+        result.addHeader("安全状态");
+
+        if (isRooted()) {
+            result.addHighRisk("是否 Root", "是");
+        } else {
+            result.add("是否 Root", "否");
+        }
+
+        final boolean devOptions =
+                env.getGlobalIntSetting(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1;
+        if (devOptions) {
+            result.addHighRisk("开发者选项", "已开启");
+        } else {
+            result.add("开发者选项", "未开启");
+        }
+
+        final boolean adbEnabled =
+                env.getGlobalIntSetting(Settings.Global.ADB_ENABLED, 0) == 1;
+        if (adbEnabled) {
+            result.addHighRisk("ADB 调试", "已开启");
+        } else {
+            result.add("ADB 调试", "未开启");
+        }
+
+        final boolean unknownSources =
+                env.getSecureIntSetting(Settings.Secure.INSTALL_NON_MARKET_APPS, 0) == 1;
+        if (unknownSources) {
+            result.addHighRisk("安装未知来源", "已允许");
+        } else {
+            result.add("安装未知来源", "不允许");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 纯逻辑辅助方法（无 I/O 依赖 Android 框架，测试友好）
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** 检测设备是否已 Root（检查常见的 su 路径）。 */
     private boolean isRooted() {
-        String[] paths = {
-            "/system/app/Superuser.apk", "/sbin/su", "/system/bin/su",
-            "/system/xbin/su", "/data/local/xbin/su", "/data/local/bin/su",
-            "/system/sd/xbin/su", "/system/bin/failsafe/su", "/data/local/su",
-            "/su/bin/su"
+        final String[] paths = {
+            "/system/app/Superuser.apk", "/sbin/su",      "/system/bin/su",
+            "/system/xbin/su",           "/data/local/xbin/su", "/data/local/bin/su",
+            "/system/sd/xbin/su",        "/system/bin/failsafe/su",
+            "/data/local/su",            "/su/bin/su"
         };
-        for (String path : paths) {
+        for (final String path : paths) {
             if (new java.io.File(path).exists()) return true;
         }
         return false;
     }
 
-    /** 读取 /proc/cpuinfo 中指定字段的值 */
-    private String readCpuInfo(String key) {
-        try (BufferedReader br = new BufferedReader(new FileReader("/proc/cpuinfo"))) {
+    /** 读取 {@code /proc/cpuinfo} 中指定字段的值；失败时返回空字符串。 */
+    @NonNull
+    private String readCpuInfo(@NonNull final String key) {
+        try (final BufferedReader br = new BufferedReader(new FileReader("/proc/cpuinfo"))) {
             String line;
             while ((line = br.readLine()) != null) {
                 if (line.startsWith(key)) {
-                    return line.split(":\\s*", 2)[1].trim();
+                    final String[] parts = line.split(":\\s*", 2);
+                    return parts.length > 1 ? parts[1].trim() : "";
                 }
             }
-        } catch (IOException ignored) {}
+        } catch (final IOException ignored) {}
         return "";
     }
 
-    private String formatBytes(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        double kb = bytes / 1024.0;
-        if (kb < 1024) return String.format("%.1f KB", kb);
-        double mb = kb / 1024.0;
-        if (mb < 1024) return String.format("%.1f MB", mb);
+    @NonNull
+    private String formatBytes(final long bytes) {
+        if (bytes < 1024L)        return bytes + " B";
+        final double kb = bytes / 1024.0;
+        if (kb    < 1024.0)       return String.format("%.1f KB", kb);
+        final double mb = kb / 1024.0;
+        if (mb    < 1024.0)       return String.format("%.1f MB", mb);
         return String.format("%.2f GB", mb / 1024.0);
     }
-
 }
