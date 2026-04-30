@@ -51,6 +51,14 @@ public class SensorFragment extends Fragment {
     private static final String PREFS_SENSOR = "sensor_fingerprints";
     private static final String KEY_HISTORY  = "fp_history";
     private static final int    MAX_HISTORY  = 5;
+    /**
+     * 历史持久化格式版本号。v1（无前缀，旧版以 "%s|%.8f|..."  开头）的特征向量含
+     * 重力 / 姿态敏感分量，与 v2 不可比较；遇到 v1 直接忽略让用户重建基线。
+     */
+    private static final String HISTORY_FORMAT_TAG = "v2";
+    private static final String HISTORY_FORMAT_PREFIX = HISTORY_FORMAT_TAG + "|";
+    /** 静止度阈值（采集期间总方差 > 该值时给出可靠性警告）。 */
+    private static final double STATIC_VAR_WARN = 0.05;
 
     private TextView tvSensorList, tvAccel, tvGyro, tvActivity, tvFingerprint, tvPressure;
     private Button btnSnap;
@@ -247,34 +255,69 @@ public class SensorFragment extends Fragment {
     }
 
     private void renderFingerprint(@NonNull RecordingResult r) {
-        Vector3 aMean = SignalProcessingMath.meanXYZ(r.accelXYZ, r.accelCount);
-        Vector3 aStd  = SignalProcessingMath.stdDevXYZ(r.accelXYZ, r.accelCount, aMean);
+        // ── 1) 姿态归一化：把 aMean 的方向旋到 (0,0,-1) ──────────
+        // 这样不同姿态（手放桌上、握持、轻微倾斜）下采集的同一台设备
+        // 都会被映射到统一坐标系，std 与 gyro mean 才会真正"对硬件个体敏感"。
+        Vector3 aMeanRaw = SignalProcessingMath.meanXYZ(r.accelXYZ, r.accelCount);
+        float[] R = SignalProcessingMath.rotationFromTo(aMeanRaw, new Vector3(0f, 0f, -1f));
+
+        float[] rotAccel = new float[r.accelCount * 3];
+        SignalProcessingMath.rotateInterleaved(r.accelXYZ, r.accelCount, R, rotAccel);
+        Vector3 aMean = SignalProcessingMath.meanXYZ(rotAccel, r.accelCount);
+        Vector3 aVar  = SignalProcessingMath.varianceXYZ(rotAccel, r.accelCount, aMean);
+        Vector3 aStd  = new Vector3(
+                (float) Math.sqrt(aVar.x), (float) Math.sqrt(aVar.y), (float) Math.sqrt(aVar.z));
+
         boolean hasGyro = r.gyroCount > 0;
-        Vector3 gMean = hasGyro ? SignalProcessingMath.meanXYZ(r.gyroXYZ, r.gyroCount) : Vector3.ZERO;
-        Vector3 gStd  = hasGyro ? SignalProcessingMath.stdDevXYZ(r.gyroXYZ, r.gyroCount, gMean) : Vector3.ZERO;
+        Vector3 gMean, gStd;
+        if (hasGyro) {
+            float[] rotGyro = new float[r.gyroCount * 3];
+            SignalProcessingMath.rotateInterleaved(r.gyroXYZ, r.gyroCount, R, rotGyro);
+            gMean = SignalProcessingMath.meanXYZ(rotGyro, r.gyroCount);
+            gStd  = SignalProcessingMath.stdDevXYZ(rotGyro, r.gyroCount, gMean);
+        } else {
+            gMean = Vector3.ZERO;
+            gStd  = Vector3.ZERO;
+        }
 
-        long hash = 0;
-        hash ^= (long) (aMean.x * 1e6) & 0xFFFFL;
-        hash ^= ((long) (aMean.y * 1e6) & 0xFFFFL) << 16;
-        hash ^= ((long) (aMean.z * 1e6) & 0xFFFFL) << 32;
-        hash ^= ((long) (gMean.x * 1e8) & 0xFFFFL) << 48;
-        String hashStr = String.format(Locale.US, "%016X", hash);
+        // 静止度诊断：rotateInterleaved 只是正交变换，方差和与原始等价
+        double sigmaTotal = (double) aVar.x + aVar.y + aVar.z;
+        Vector3 residual = SignalProcessingMath.stripGravity(aMeanRaw);
 
+        // ── 2) 6D 特征向量 + SHA-256 哈希 ──────────────────────
+        // [stdAccelX, stdAccelY, stdAccelZ, gyroMeanX, gyroMeanY, gyroMeanZ]
+        // 加速度标准差 ≈ 器件噪声底；陀螺仪零漂 ≈ ZRO（Zero-Rate Output），都是
+        // 公认的传感器侧信道指纹来源，且与姿态无关（前提是已做姿态归一化）。
+        String hashStr = SignalProcessingMath.fingerprintHash(aStd, gMean);
+
+        // ── 3) UI 文本 ────────────────────────────────────────
         StringBuilder sb = new StringBuilder();
         sb.append("═══ 实验性传感器指纹 ═══\n");
         sb.append("⚠ 稳定性需在静止、多轮、多设备条件下验证\n");
         sb.append(String.format(Locale.US, "本次指纹哈希: %s\n\n", hashStr));
 
-        sb.append("加速度计 Bias（静态偏差）:\n");
-        sb.append(String.format(Locale.US, "  X: %+.6f  σ=%.6f\n", aMean.x, aStd.x));
-        sb.append(String.format(Locale.US, "  Y: %+.6f  σ=%.6f\n", aMean.y, aStd.y));
-        sb.append(String.format(Locale.US, "  Z: %+.6f  σ=%.6f\n", aMean.z, aStd.z));
+        sb.append(String.format(Locale.US,
+                "静止度判定：σ_total=%.6f  (样本=%d)\n", sigmaTotal, r.accelCount));
+        if (sigmaTotal > STATIC_VAR_WARN) {
+            sb.append("  ⚠ 采集期间手机不够稳定，结果可能不可信。\n");
+            sb.append("  建议把手机放在桌面后再点采集，避免握持/触碰。\n");
+        } else {
+            sb.append("  ✓ 采集稳定。\n");
+        }
+        sb.append("\n");
+
+        sb.append("加速度计 σ（姿态归一化后，每轴噪声底）:\n");
+        sb.append(String.format(Locale.US, "  σx=%.6f  σy=%.6f  σz=%.6f\n", aStd.x, aStd.y, aStd.z));
+        sb.append(String.format(Locale.US,
+                "  残余偏差 (x,y,|a|-g): %+.4f, %+.4f, %+.4f\n",
+                residual.x, residual.y, residual.z));
 
         if (hasGyro) {
-            sb.append("\n陀螺仪零漂（Zero-Rate Output）:\n");
-            sb.append(String.format(Locale.US, "  X: %+.6f  σ=%.6f\n", gMean.x, gStd.x));
-            sb.append(String.format(Locale.US, "  Y: %+.6f  σ=%.6f\n", gMean.y, gStd.y));
-            sb.append(String.format(Locale.US, "  Z: %+.6f  σ=%.6f\n", gMean.z, gStd.z));
+            sb.append("\n陀螺仪零漂（旋至同一坐标系后的 mean）:\n");
+            sb.append(String.format(Locale.US, "  μx=%+.6f  μy=%+.6f  μz=%+.6f\n",
+                    gMean.x, gMean.y, gMean.z));
+            sb.append(String.format(Locale.US, "  σx=%.6f  σy=%.6f  σz=%.6f\n",
+                    gStd.x, gStd.y, gStd.z));
         }
 
         if (r.pressureCount > 0) {
@@ -292,6 +335,7 @@ public class SensorFragment extends Fragment {
             sb.append("\n气压计 (TYPE_PRESSURE): 本设备无气压计\n");
         }
 
+        // ── 4) 历史对比 + 判定 ───────────────────────────────────
         sb.append("\n── 历史指纹对比（向量距离） ──\n");
         SharedPreferences prefs = requireContext().getSharedPreferences(
                 PREFS_SENSOR, Context.MODE_PRIVATE);
@@ -299,10 +343,15 @@ public class SensorFragment extends Fragment {
         String[] histEntries = history == null || history.isEmpty()
                 ? new String[0] : history.split(",");
 
-        double[] curVec = { aMean.x, aMean.y, aMean.z, gMean.x, gMean.y, gMean.z };
+        double[] curVec = { aStd.x, aStd.y, aStd.z, gMean.x, gMean.y, gMean.z };
         double minDist = Double.MAX_VALUE;
         int validCount = 0;
+        int legacyCount = 0;
         for (String entry : histEntries) {
+            if (entry != null && !entry.isEmpty() && !entry.startsWith(HISTORY_FORMAT_PREFIX)) {
+                legacyCount++;
+                continue;
+            }
             double[] vec = parseHistoryEntry(entry);
             if (vec != null) {
                 validCount++;
@@ -313,27 +362,43 @@ public class SensorFragment extends Fragment {
 
         if (validCount == 0) {
             sb.append("  首次采集，暂无历史数据\n");
+            if (legacyCount > 0) {
+                sb.append(String.format(Locale.US,
+                        "  （已忽略 %d 条旧版 v1 历史，特征向量与新算法不可比，需重建基线）\n",
+                        legacyCount));
+            }
         } else {
+            double sim = SignalProcessingMath.similarityPercent(
+                    minDist, SignalProcessingMath.SIMILARITY_SIGMA);
+            SignalProcessingMath.MatchLevel level =
+                    SignalProcessingMath.classifyMatch(minDist);
             sb.append(String.format(Locale.US, "  历史记录数: %d\n", validCount));
-            sb.append(String.format(Locale.US, "  与最近历史的向量距离: %.6f\n", minDist));
-            double similarity = 100.0 / (1.0 + minDist * 50.0);
-            sb.append(String.format(Locale.US, "  估算相似度: %.1f%%\n", similarity));
-            sb.append("  注：相似度受温度、姿态、运动影响；请静置多次采集以评估稳定性\n");
+            sb.append(String.format(Locale.US, "  最近距离: %.6f\n", minDist));
+            sb.append(String.format(Locale.US, "  估算相似度: %.1f%%\n", sim));
+            sb.append("  判定: ").append(matchLevelLabel(level)).append("\n");
+            if (legacyCount > 0) {
+                sb.append(String.format(Locale.US,
+                        "  （已忽略 %d 条旧版 v1 历史）\n", legacyCount));
+            }
         }
 
+        // ── 5) 持久化（v2 格式） ────────────────────────────────
         String newEntry = String.format(Locale.US,
-                "%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
-                hashStr, aMean.x, aMean.y, aMean.z, gMean.x, gMean.y, gMean.z);
+                "%s%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
+                HISTORY_FORMAT_PREFIX, hashStr,
+                aStd.x, aStd.y, aStd.z, gMean.x, gMean.y, gMean.z);
+        // 写回时仅保留 v2 条目，主动淘汰旧版
+        String[] cleaned = filterValidEntries(histEntries);
         String[] newHistory;
-        if (histEntries.length >= MAX_HISTORY) {
+        if (cleaned.length >= MAX_HISTORY) {
             newHistory = new String[MAX_HISTORY];
-            System.arraycopy(histEntries, histEntries.length - MAX_HISTORY + 1,
+            System.arraycopy(cleaned, cleaned.length - MAX_HISTORY + 1,
                     newHistory, 0, MAX_HISTORY - 1);
             newHistory[MAX_HISTORY - 1] = newEntry;
         } else {
-            newHistory = new String[histEntries.length + 1];
-            System.arraycopy(histEntries, 0, newHistory, 0, histEntries.length);
-            newHistory[histEntries.length] = newEntry;
+            newHistory = new String[cleaned.length + 1];
+            System.arraycopy(cleaned, 0, newHistory, 0, cleaned.length);
+            newHistory[cleaned.length] = newEntry;
         }
         prefs.edit().putString(KEY_HISTORY, String.join(",", newHistory)).apply();
 
@@ -344,19 +409,50 @@ public class SensorFragment extends Fragment {
         tvFingerprint.setText(sb.toString());
     }
 
+    private static String matchLevelLabel(SignalProcessingMath.MatchLevel level) {
+        switch (level) {
+            case MATCH:    return "MATCH（同一设备）";
+            case LIKELY:   return "LIKELY（很可能同一设备）";
+            case UNLIKELY: return "UNLIKELY（不太像同一设备）";
+            case NEW:
+            default:       return "NEW（新设备 / 不可比）";
+        }
+    }
+
+    private static String[] filterValidEntries(String[] entries) {
+        int kept = 0;
+        for (String e : entries) {
+            if (e != null && e.startsWith(HISTORY_FORMAT_PREFIX)) kept++;
+        }
+        String[] out = new String[kept];
+        int idx = 0;
+        for (String e : entries) {
+            if (e != null && e.startsWith(HISTORY_FORMAT_PREFIX)) out[idx++] = e;
+        }
+        return out;
+    }
+
+    /**
+     * 解析 v2 历史条目 → 6D 特征向量。格式：
+     *   v2|HASH|stdX|stdY|stdZ|gyroX|gyroY|gyroZ
+     *
+     * 旧版 v1（无 "v2|" 前缀，含重力分量）特征向量与新算法完全不可比，
+     * 这里直接返回 null 让上层忽略；下次采集会自动写入 v2 形成新基线。
+     */
     @Nullable
     private static double[] parseHistoryEntry(String entry) {
         if (entry == null) return null;
+        if (!entry.startsWith(HISTORY_FORMAT_PREFIX)) return null;
         String[] parts = entry.split("\\|");
-        if (parts.length != 7) return null;
+        if (parts.length != 8) return null;
         try {
             return new double[] {
-                    Double.parseDouble(parts[1]),
                     Double.parseDouble(parts[2]),
                     Double.parseDouble(parts[3]),
                     Double.parseDouble(parts[4]),
                     Double.parseDouble(parts[5]),
-                    Double.parseDouble(parts[6])
+                    Double.parseDouble(parts[6]),
+                    Double.parseDouble(parts[7])
             };
         } catch (NumberFormatException e) {
             return null;
