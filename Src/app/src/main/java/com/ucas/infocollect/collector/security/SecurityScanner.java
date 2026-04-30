@@ -2,6 +2,9 @@ package com.ucas.infocollect.collector.security;
 
 import androidx.annotation.NonNull;
 
+import java.util.Collections;
+import java.util.List;
+
 /**
  * 安全子扫描器策略接口（Strategy Pattern）。
  *
@@ -66,4 +69,21 @@ public interface SecurityScanner {
      */
     @NonNull
     ScanResult scan(@NonNull SecurityScanContext ctx);
+
+    /**
+     * 声明本扫描器正常工作所需的 Android 危险权限列表。
+     *
+     * <p>默认返回空列表（大多数扫描器无需额外权限）。
+     * 需要权限的子扫描器应覆写此方法，返回
+     * {@code android.Manifest.permission.*} 中定义的常量列表。</p>
+     *
+     * <p>{@link SecurityCollectorV2} 在 {@code getRequiredPermissions()} 中
+     * 遍历所有已注册扫描器并取权限并集，本方法的返回值会被合并入最终列表。</p>
+     *
+     * @return 不可变的权限字符串列表；无需权限时返回空列表
+     */
+    @NonNull
+    default List<String> getRequiredPermissions() {
+        return Collections.emptyList();
+    }
 }

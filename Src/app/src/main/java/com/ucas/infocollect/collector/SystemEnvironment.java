@@ -1,5 +1,7 @@
 package com.ucas.infocollect.collector;
 
+import android.content.pm.PackageManager;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
@@ -48,4 +50,13 @@ public interface SystemEnvironment {
      * @param defValue 字段不存在时的默认返回值
      */
     int getGlobalIntSetting(@NonNull String key, int defValue);
+
+    /**
+     * 提供 {@link PackageManager} 实例，用于枚举已安装应用及其元数据。
+     *
+     * <p>调用方不得持久持有返回的引用；每次需要时应重新获取，
+     * 以防 Activity 重建后出现陈旧实例。</p>
+     */
+    @NonNull
+    PackageManager getPackageManager();
 }

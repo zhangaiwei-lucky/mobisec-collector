@@ -2,6 +2,7 @@ package com.ucas.infocollect.collector;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.provider.Settings;
 
 import androidx.annotation.NonNull;
@@ -66,5 +67,11 @@ public final class AndroidSystemEnvironment implements SystemEnvironment {
         } catch (final Exception ignored) {
             return defValue;
         }
+    }
+
+    @NonNull
+    @Override
+    public PackageManager getPackageManager() {
+        return appContext.getPackageManager();
     }
 }
