@@ -3,8 +3,6 @@ package com.ucas.infocollect.fragment;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.hardware.Sensor;
-import android.hardware.SensorEvent;
-import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.os.Handler;
@@ -22,50 +20,53 @@ import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
 import com.ucas.infocollect.R;
+import com.ucas.infocollect.engine.sensor.RecordingResult;
+import com.ucas.infocollect.engine.sensor.SensorSamplingEngine;
+import com.ucas.infocollect.engine.sensor.SensorSnapshot;
+import com.ucas.infocollect.engine.sensor.SignalProcessingMath;
+import com.ucas.infocollect.engine.sensor.Vector3;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * 传感器侧信道分析界面
+ * 传感器侧信道分析 UI（Phase 2 薄壳化版本）。
  *
- * 实时模式：onResume 注册传感器，onPause 取消，数据持续更新
- * 分析模式：点击按钮采集 5 秒快照，生成硬件指纹和活动识别结果
+ * 本类不再持有任何 {@code SensorManager} / {@code SensorEventListener} 引用，
+ * 也不再做任何方差/标准差/均值计算。所有硬件 I/O 与并发都封装在
+ * {@link SensorSamplingEngine}，所有数学运算都封装在 {@link SignalProcessingMath}。
+ *
+ * Fragment 的职责被压缩为三件事：
+ *   1) onResume/onPause 启停引擎；
+ *   2) 用 10Hz 的低频 {@link Handler} 定时器把 {@link SensorSnapshot} 渲染到 TextView；
+ *   3) 触发一次窗口录制并把 {@link RecordingResult} 解读为人类可读文本。
  */
-public class SensorFragment extends Fragment implements SensorEventListener {
+public class SensorFragment extends Fragment {
 
-    private static final int SAMPLE_MS   = 5000;
-    private static final int MAX_SAMPLES = 1000;
-    private static final int UI_SKIP     = 10; // 每 10 个事件刷一次 UI（约 5Hz）
+    private static final long SAMPLE_DURATION_MS = 5000L;
+    private static final int  MAX_RECORDING_SAMPLES = 1000;
+    /** UI 显示刷新周期（10Hz 足够人眼感知，但远低于硬件回调频率，避免 setText 抖动）。 */
+    private static final long UI_TICK_MS = 100L;
 
-    private static final String PREFS_SENSOR  = "sensor_fingerprints";
-    private static final String KEY_HISTORY   = "fp_history";
-    private static final int    MAX_HISTORY   = 5;
+    private static final String PREFS_SENSOR = "sensor_fingerprints";
+    private static final String KEY_HISTORY  = "fp_history";
+    private static final int    MAX_HISTORY  = 5;
 
-    private SensorManager sensorManager;
-    private Sensor accelSensor, gyroSensor, pressureSensor;
-
-    // 实时值
-    private float[] liveAccel    = new float[3];
-    private float[] liveGyro     = new float[3];
-    private float   livePressure = 0f;
-    private int eventCount = 0;
-
-    // 采集快照数据
-    private final List<float[]>  accelSnap    = new ArrayList<>();
-    private final List<float[]>  gyroSnap     = new ArrayList<>();
-    private final List<Float>    pressureSnap = new ArrayList<>();
-    private boolean isSnapping = false;
-    private boolean pressureDataReceived = false; // 是否已收到气压计回调
-
-    // UI
     private TextView tvSensorList, tvAccel, tvGyro, tvActivity, tvFingerprint, tvPressure;
-    private Button   btnSnap;
+    private Button btnSnap;
     private ProgressBar progressBar;
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private Runnable stopSnapRunnable;
+    private SensorSamplingEngine engine;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    /** 10Hz 拉取定时器：自我重投的低频轮询，等价于一个简单的 Throttle。 */
+    private final Runnable uiTick = new Runnable() {
+        @Override public void run() {
+            if (engine == null || tvAccel == null) return;
+            renderSnapshot(engine.getCurrentSnapshot());
+            mainHandler.postDelayed(this, UI_TICK_MS);
+        }
+    };
 
     @Nullable
     @Override
@@ -82,144 +83,146 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         btnSnap       = view.findViewById(R.id.btn_start_sample);
         progressBar   = view.findViewById(R.id.progress_sampling);
 
-        try {
-            sensorManager = (SensorManager) requireContext()
-                .getSystemService(Context.SENSOR_SERVICE);
-            accelSensor    = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            gyroSensor     = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-            pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE);
-            displaySensorInventory();
-        } catch (Exception e) {
-            tvSensorList.setText("传感器初始化失败: " + e.getMessage());
-        }
+        SensorSamplingEngine.Config cfg = new SensorSamplingEngine.Config();
+        cfg.maxRecordingSamples = MAX_RECORDING_SAMPLES;
+        engine = new SensorSamplingEngine(requireContext(), cfg);
 
-        btnSnap.setOnClickListener(v -> { if (!isSnapping) startSnapshot(); });
+        btnSnap.setOnClickListener(v -> startRecording());
+        tvFingerprint.setText("点击下方按钮采集实验性传感器指纹\n建议先将手机静置 5 秒后再采集");
         return view;
     }
-
-    // ── 生命周期：可见时注册传感器，不可见时取消 ──────────────────
 
     @Override
     public void onResume() {
         super.onResume();
-        if (sensorManager != null) {
-            if (accelSensor != null)
-                sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME);
-            if (gyroSensor != null)
-                sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME);
-            if (pressureSensor != null)
-                sensorManager.registerListener(this, pressureSensor, SensorManager.SENSOR_DELAY_NORMAL);
-        }
+        engine.start();
+        renderSensorInventory();
+        renderSnapshot(engine.getCurrentSnapshot()); // 立刻刷一次首屏
+        mainHandler.postDelayed(uiTick, UI_TICK_MS);
     }
 
     @Override
     public void onPause() {
         super.onPause();
-        // 离开 tab 时停止实时采集（不影响已采集的快照数据）
-        if (sensorManager != null) sensorManager.unregisterListener(this);
-        if (isSnapping) cancelSnapshot();
-    }
-
-    // ── 传感器回调 ─────────────────────────────────────────────────
-
-    @Override
-    public void onSensorChanged(SensorEvent event) {
-        int type = event.sensor.getType();
-        if (type == Sensor.TYPE_ACCELEROMETER) {
-            liveAccel = event.values.clone();
-            if (isSnapping && accelSnap.size() < MAX_SAMPLES)
-                accelSnap.add(event.values.clone());
-        } else if (type == Sensor.TYPE_GYROSCOPE) {
-            liveGyro = event.values.clone();
-            if (isSnapping && gyroSnap.size() < MAX_SAMPLES)
-                gyroSnap.add(event.values.clone());
-        } else if (type == Sensor.TYPE_PRESSURE) {
-            livePressure = event.values[0];
-            pressureDataReceived = true;
-            if (isSnapping && pressureSnap.size() < MAX_SAMPLES)
-                pressureSnap.add(event.values[0]);
-        }
-
-        // 限速 UI 更新
-        if (++eventCount % UI_SKIP == 0) updateLiveDisplay();
+        mainHandler.removeCallbacks(uiTick);
+        engine.stop(); // 引擎内部会自行取消进行中的录制
     }
 
     @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    public void onDestroyView() {
+        super.onDestroyView();
+        mainHandler.removeCallbacksAndMessages(null);
+        tvAccel = tvGyro = tvActivity = tvFingerprint = tvSensorList = tvPressure = null;
+        progressBar = null;
+        btnSnap = null;
+    }
 
-    private void updateLiveDisplay() {
+    // ── 实时渲染（10Hz 拉取） ────────────────────────────────────────
+
+    private void renderSnapshot(@NonNull SensorSnapshot s) {
         if (tvAccel == null) return;
+
+        Vector3 a = s.accel;
         tvAccel.setText(String.format(Locale.getDefault(),
-            "加速度 (m/s²)  X=%+6.3f  Y=%+6.3f  Z=%+6.3f",
-            liveAccel[0], liveAccel[1], liveAccel[2]));
+                "加速度 (m/s²)  X=%+6.3f  Y=%+6.3f  Z=%+6.3f",
+                a.x, a.y, a.z));
+
+        Vector3 g = s.gyro;
         tvGyro.setText(String.format(Locale.getDefault(),
-            "角速度 (rad/s) X=%+7.4f  Y=%+7.4f  Z=%+7.4f",
-            liveGyro[0], liveGyro[1], liveGyro[2]));
-        if (tvPressure != null) {
-            if (pressureSensor == null) {
-                tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
-            } else if (!pressureDataReceived) {
-                tvPressure.setText("气压计：暂未收到气压数据（传感器存在，等待回调）");
-            } else {
-                float altitude = SensorManager.getAltitude(
-                    SensorManager.PRESSURE_STANDARD_ATMOSPHERE, livePressure);
-                tvPressure.setText(String.format(Locale.getDefault(),
+                "角速度 (rad/s) X=%+7.4f  Y=%+7.4f  Z=%+7.4f",
+                g.x, g.y, g.z));
+
+        if (tvPressure == null) return;
+        if (!engine.hasPressureSensor()) {
+            tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
+        } else if (!s.hasPressure) {
+            tvPressure.setText("气压计：暂未收到气压数据（传感器存在，等待回调）");
+        } else {
+            float altitude = SensorManager.getAltitude(
+                    SensorManager.PRESSURE_STANDARD_ATMOSPHERE, s.pressureHpa);
+            tvPressure.setText(String.format(Locale.getDefault(),
                     "气压: %.2f hPa  |  估算海拔: %.1f m  |  ≈楼层: %d",
-                    livePressure, altitude, Math.round(altitude / 3.0)));
-            }
+                    s.pressureHpa, altitude, Math.round(altitude / 3.0)));
         }
     }
 
-    // ── 快照采集与分析 ─────────────────────────────────────────────
+    private void renderSensorInventory() {
+        if (tvSensorList == null) return;
+        List<Sensor> all = engine.listAvailableSensors();
+        StringBuilder sb = new StringBuilder();
+        sb.append("⚠ 以下传感器均无需任何权限\n");
+        sb.append("────────────────────────\n");
+        for (Sensor s : all) {
+            sb.append(String.format(Locale.getDefault(),
+                    "• %-16s [%s]  功耗:%.1fmA\n",
+                    sensorName(s.getType()),
+                    s.getVendor() != null ? s.getVendor() : "?",
+                    s.getPower()));
+        }
+        sb.append("\n共 ").append(all.size()).append(" 个传感器");
+        tvSensorList.setText(sb.toString());
+    }
 
-    private void startSnapshot() {
-        isSnapping = true;
-        accelSnap.clear();
-        gyroSnap.clear();
-        pressureSnap.clear();
+    private static String sensorName(int type) {
+        switch (type) {
+            case Sensor.TYPE_ACCELEROMETER:       return "加速度计";
+            case Sensor.TYPE_GYROSCOPE:           return "陀螺仪";
+            case Sensor.TYPE_MAGNETIC_FIELD:      return "磁力计";
+            case Sensor.TYPE_PRESSURE:            return "气压计";
+            case Sensor.TYPE_LIGHT:               return "光线传感器";
+            case Sensor.TYPE_PROXIMITY:           return "接近传感器";
+            case Sensor.TYPE_GRAVITY:             return "重力传感器";
+            case Sensor.TYPE_LINEAR_ACCELERATION: return "线性加速度";
+            case Sensor.TYPE_ROTATION_VECTOR:     return "旋转矢量";
+            case Sensor.TYPE_STEP_COUNTER:        return "计步器";
+            case Sensor.TYPE_HEART_RATE:          return "心率";
+            default:                              return "传感器#" + type;
+        }
+    }
+
+    // ── 录制 + 分析 ─────────────────────────────────────────────────
+
+    private void startRecording() {
+        if (engine.isRecording()) return;
+
+        boolean started = engine.startRecording(
+                SAMPLE_DURATION_MS, mainHandler, this::onRecordingComplete);
+        if (!started) return;
+
         btnSnap.setEnabled(false);
         btnSnap.setText("采集中... (5s)");
         progressBar.setVisibility(View.VISIBLE);
         tvFingerprint.setText("正在采集传感器噪声数据...\n请保持手机静置，勿晃动");
         tvActivity.setText("分析中...");
-
-        stopSnapRunnable = this::finishSnapshot;
-        handler.postDelayed(stopSnapRunnable, SAMPLE_MS);
     }
 
-    private void finishSnapshot() {
-        isSnapping = false;
+    private void onRecordingComplete(@NonNull RecordingResult result) {
+        if (tvFingerprint == null) return; // view 已销毁
+
         progressBar.setVisibility(View.GONE);
         btnSnap.setEnabled(true);
         btnSnap.setText("重新采集分析");
 
-        if (accelSnap.size() < 10) {
-            tvFingerprint.setText("采样数据不足（" + accelSnap.size() + "条），请重试");
+        if (result.wasCancelled || !result.hasEnoughAccelSamples(10)) {
+            tvFingerprint.setText("采样数据不足（" + result.accelCount + "条），请重试");
             return;
         }
+
         try {
-            analyzeActivity();
-            generateFingerprint();
+            renderActivity(result);
+            renderFingerprint(result);
         } catch (Exception e) {
             tvFingerprint.setText("分析出错: " + e.getMessage());
         }
     }
 
-    private void cancelSnapshot() {
-        isSnapping = false;
-        if (stopSnapRunnable != null) handler.removeCallbacks(stopSnapRunnable);
-        progressBar.setVisibility(View.GONE);
-        btnSnap.setEnabled(true);
-        btnSnap.setText("重新采集分析");
-    }
+    private void renderActivity(@NonNull RecordingResult r) {
+        Vector3 mean = SignalProcessingMath.meanXYZ(r.accelXYZ, r.accelCount);
+        Vector3 var  = SignalProcessingMath.varianceXYZ(r.accelXYZ, r.accelCount, mean);
+        double total = (double) var.x + var.y + var.z;
 
-    // ── 活动识别 ───────────────────────────────────────────────────
-
-    private void analyzeActivity() {
-        double[] var = variance(accelSnap);
-        double total = var[0] + var[1] + var[2];
-
-        String activity; int color;
+        String activity;
+        int color;
         if (total < 0.05) {
             activity = "静止（桌面放置）";
             color = ContextCompat.getColor(requireContext(), R.color.sensor_activity_static);
@@ -239,75 +242,71 @@ public class SensorFragment extends Fragment implements SensorEventListener {
 
         tvActivity.setTextColor(color);
         tvActivity.setText(String.format(Locale.getDefault(),
-            "识别结果：%s\n方差 X=%.5f Y=%.5f Z=%.5f\n总方差=%.5f  样本=%d",
-            activity, var[0], var[1], var[2], total, accelSnap.size()));
+                "识别结果：%s\n方差 X=%.5f Y=%.5f Z=%.5f\n总方差=%.5f  样本=%d",
+                activity, var.x, var.y, var.z, total, r.accelCount));
     }
 
-    // ── 硬件指纹 ───────────────────────────────────────────────────
-
-    private void generateFingerprint() {
-        double[] aMean = mean(accelSnap);
-        double[] aStd  = std(accelSnap, aMean);
-        double[] gMean = gyroSnap.isEmpty() ? new double[3] : mean(gyroSnap);
-        double[] gStd  = gyroSnap.isEmpty() ? new double[3] : std(gyroSnap, gMean);
+    private void renderFingerprint(@NonNull RecordingResult r) {
+        Vector3 aMean = SignalProcessingMath.meanXYZ(r.accelXYZ, r.accelCount);
+        Vector3 aStd  = SignalProcessingMath.stdDevXYZ(r.accelXYZ, r.accelCount, aMean);
+        boolean hasGyro = r.gyroCount > 0;
+        Vector3 gMean = hasGyro ? SignalProcessingMath.meanXYZ(r.gyroXYZ, r.gyroCount) : Vector3.ZERO;
+        Vector3 gStd  = hasGyro ? SignalProcessingMath.stdDevXYZ(r.gyroXYZ, r.gyroCount, gMean) : Vector3.ZERO;
 
         long hash = 0;
-        hash ^= (long)(aMean[0] * 1e6) & 0xFFFFL;
-        hash ^= ((long)(aMean[1] * 1e6) & 0xFFFFL) << 16;
-        hash ^= ((long)(aMean[2] * 1e6) & 0xFFFFL) << 32;
-        hash ^= ((long)(gMean[0] * 1e8) & 0xFFFFL) << 48;
-        String hashStr = String.format("%016X", hash);
+        hash ^= (long) (aMean.x * 1e6) & 0xFFFFL;
+        hash ^= ((long) (aMean.y * 1e6) & 0xFFFFL) << 16;
+        hash ^= ((long) (aMean.z * 1e6) & 0xFFFFL) << 32;
+        hash ^= ((long) (gMean.x * 1e8) & 0xFFFFL) << 48;
+        String hashStr = String.format(Locale.US, "%016X", hash);
 
         StringBuilder sb = new StringBuilder();
         sb.append("═══ 实验性传感器指纹 ═══\n");
         sb.append("⚠ 稳定性需在静止、多轮、多设备条件下验证\n");
-        sb.append(String.format("本次指纹哈希: %s\n\n", hashStr));
+        sb.append(String.format(Locale.US, "本次指纹哈希: %s\n\n", hashStr));
 
         sb.append("加速度计 Bias（静态偏差）:\n");
-        sb.append(String.format("  X: %+.6f  σ=%.6f\n", aMean[0], aStd[0]));
-        sb.append(String.format("  Y: %+.6f  σ=%.6f\n", aMean[1], aStd[1]));
-        sb.append(String.format("  Z: %+.6f  σ=%.6f\n", aMean[2], aStd[2]));
+        sb.append(String.format(Locale.US, "  X: %+.6f  σ=%.6f\n", aMean.x, aStd.x));
+        sb.append(String.format(Locale.US, "  Y: %+.6f  σ=%.6f\n", aMean.y, aStd.y));
+        sb.append(String.format(Locale.US, "  Z: %+.6f  σ=%.6f\n", aMean.z, aStd.z));
 
-        if (!gyroSnap.isEmpty()) {
+        if (hasGyro) {
             sb.append("\n陀螺仪零漂（Zero-Rate Output）:\n");
-            sb.append(String.format("  X: %+.6f  σ=%.6f\n", gMean[0], gStd[0]));
-            sb.append(String.format("  Y: %+.6f  σ=%.6f\n", gMean[1], gStd[1]));
-            sb.append(String.format("  Z: %+.6f  σ=%.6f\n", gMean[2], gStd[2]));
+            sb.append(String.format(Locale.US, "  X: %+.6f  σ=%.6f\n", gMean.x, gStd.x));
+            sb.append(String.format(Locale.US, "  Y: %+.6f  σ=%.6f\n", gMean.y, gStd.y));
+            sb.append(String.format(Locale.US, "  Z: %+.6f  σ=%.6f\n", gMean.z, gStd.z));
         }
 
-        // 气压计数据（带存在性检查）
-        if (!pressureSnap.isEmpty()) {
-            double pMean = 0;
-            for (float p : pressureSnap) pMean += p;
-            pMean /= pressureSnap.size();
+        if (r.pressureCount > 0) {
+            double pMean = SignalProcessingMath.meanScalar(r.pressureHpa, r.pressureCount);
             float altitude = SensorManager.getAltitude(
-                SensorManager.PRESSURE_STANDARD_ATMOSPHERE, (float) pMean);
-            sb.append(String.format("\n气压计 (TYPE_PRESSURE):\n"));
-            sb.append(String.format("  平均气压: %.2f hPa\n", pMean));
-            sb.append(String.format("  估算海拔: %.1f m（约 %d 楼）\n",
-                altitude, Math.round(altitude / 3.0)));
+                    SensorManager.PRESSURE_STANDARD_ATMOSPHERE, (float) pMean);
+            sb.append("\n气压计 (TYPE_PRESSURE):\n");
+            sb.append(String.format(Locale.US, "  平均气压: %.2f hPa\n", pMean));
+            sb.append(String.format(Locale.US, "  估算海拔: %.1f m（约 %d 楼）\n",
+                    altitude, Math.round(altitude / 3.0)));
             sb.append("  侧信道价值: 可推断所在楼层变化（电梯场景）\n");
-        } else if (pressureSensor != null) {
+        } else if (engine.hasPressureSensor()) {
             sb.append("\n气压计 (TYPE_PRESSURE): 传感器存在，采集期间暂未收到数据\n");
         } else {
             sb.append("\n气压计 (TYPE_PRESSURE): 本设备无气压计\n");
         }
 
-        // 历史指纹对比（基于均值向量 L2 距离，比纯 hash 匹配更有意义）
-        // 存储格式: "HASH|ax|ay|az|gx|gy|gz" 每条记录，用逗号分隔
         sb.append("\n── 历史指纹对比（向量距离） ──\n");
-        SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_SENSOR, Context.MODE_PRIVATE);
+        SharedPreferences prefs = requireContext().getSharedPreferences(
+                PREFS_SENSOR, Context.MODE_PRIVATE);
         String history = prefs.getString(KEY_HISTORY, "");
-        String[] histEntries = history.isEmpty() ? new String[0] : history.split(",");
+        String[] histEntries = history == null || history.isEmpty()
+                ? new String[0] : history.split(",");
 
-        double[] curVec = { aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2] };
+        double[] curVec = { aMean.x, aMean.y, aMean.z, gMean.x, gMean.y, gMean.z };
         double minDist = Double.MAX_VALUE;
         int validCount = 0;
         for (String entry : histEntries) {
             double[] vec = parseHistoryEntry(entry);
             if (vec != null) {
                 validCount++;
-                double dist = vectorDistance(curVec, vec);
+                double dist = SignalProcessingMath.euclideanDistance(curVec, vec);
                 if (dist < minDist) minDist = dist;
             }
         }
@@ -315,21 +314,21 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         if (validCount == 0) {
             sb.append("  首次采集，暂无历史数据\n");
         } else {
-            sb.append(String.format("  历史记录数: %d\n", validCount));
-            sb.append(String.format("  与最近历史的向量距离: %.6f\n", minDist));
-            // 距离越小相似度越高；distance=0 → 100%，distance很大 → 接近0%
+            sb.append(String.format(Locale.US, "  历史记录数: %d\n", validCount));
+            sb.append(String.format(Locale.US, "  与最近历史的向量距离: %.6f\n", minDist));
             double similarity = 100.0 / (1.0 + minDist * 50.0);
-            sb.append(String.format("  估算相似度: %.1f%%\n", similarity));
+            sb.append(String.format(Locale.US, "  估算相似度: %.1f%%\n", similarity));
             sb.append("  注：相似度受温度、姿态、运动影响；请静置多次采集以评估稳定性\n");
         }
 
-        // 保存到历史（新格式含向量数据）
-        String newEntry = String.format(Locale.US, "%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
-            hashStr, aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2]);
+        String newEntry = String.format(Locale.US,
+                "%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
+                hashStr, aMean.x, aMean.y, aMean.z, gMean.x, gMean.y, gMean.z);
         String[] newHistory;
         if (histEntries.length >= MAX_HISTORY) {
             newHistory = new String[MAX_HISTORY];
-            System.arraycopy(histEntries, histEntries.length - MAX_HISTORY + 1, newHistory, 0, MAX_HISTORY - 1);
+            System.arraycopy(histEntries, histEntries.length - MAX_HISTORY + 1,
+                    newHistory, 0, MAX_HISTORY - 1);
             newHistory[MAX_HISTORY - 1] = newEntry;
         } else {
             newHistory = new String[histEntries.length + 1];
@@ -345,119 +344,22 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         tvFingerprint.setText(sb.toString());
     }
 
-    /** 解析历史条目：格式 "HASH|ax|ay|az|gx|gy|gz"，返回向量或 null */
-    private double[] parseHistoryEntry(String entry) {
+    @Nullable
+    private static double[] parseHistoryEntry(String entry) {
         if (entry == null) return null;
         String[] parts = entry.split("\\|");
         if (parts.length != 7) return null;
         try {
-            return new double[]{
-                Double.parseDouble(parts[1]),
-                Double.parseDouble(parts[2]),
-                Double.parseDouble(parts[3]),
-                Double.parseDouble(parts[4]),
-                Double.parseDouble(parts[5]),
-                Double.parseDouble(parts[6])
+            return new double[] {
+                    Double.parseDouble(parts[1]),
+                    Double.parseDouble(parts[2]),
+                    Double.parseDouble(parts[3]),
+                    Double.parseDouble(parts[4]),
+                    Double.parseDouble(parts[5]),
+                    Double.parseDouble(parts[6])
             };
         } catch (NumberFormatException e) {
             return null;
         }
-    }
-
-    /** L2 向量距离 */
-    private double vectorDistance(double[] a, double[] b) {
-        double sum = 0;
-        int len = Math.min(a.length, b.length);
-        for (int i = 0; i < len; i++) {
-            double d = a[i] - b[i];
-            sum += d * d;
-        }
-        return Math.sqrt(sum);
-    }
-
-    // ── 传感器清单 ─────────────────────────────────────────────────
-
-    private void displaySensorInventory() {
-        List<Sensor> all = sensorManager.getSensorList(Sensor.TYPE_ALL);
-        StringBuilder sb = new StringBuilder();
-        sb.append("⚠ 以下传感器均无需任何权限\n");
-        sb.append("────────────────────────\n");
-        for (Sensor s : all) {
-            sb.append(String.format("• %-16s [%s]  功耗:%.1fmA\n",
-                getSensorName(s.getType()),
-                s.getVendor() != null ? s.getVendor() : "?",
-                s.getPower()));
-        }
-        sb.append("\n共 ").append(all.size()).append(" 个传感器");
-        tvSensorList.setText(sb.toString());
-
-        // 初始化气压计状态显示
-        if (tvPressure != null) {
-            if (pressureSensor == null) {
-                tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
-            } else {
-                tvPressure.setText("气压计：正在等待数据...");
-            }
-        }
-
-        // 初始化指纹区域提示
-        if (tvFingerprint != null) {
-            tvFingerprint.setText("点击下方按钮采集实验性传感器指纹\n建议先将手机静置 5 秒后再采集");
-        }
-    }
-
-    // ── 统计工具 ───────────────────────────────────────────────────
-
-    private double[] mean(List<float[]> s) {
-        double[] m = new double[3];
-        for (float[] v : s) { m[0]+=v[0]; m[1]+=v[1]; m[2]+=v[2]; }
-        int n = s.size(); m[0]/=n; m[1]/=n; m[2]/=n;
-        return m;
-    }
-    private double[] std(List<float[]> s, double[] m) {
-        double[] v = new double[3];
-        for (float[] x : s) {
-            v[0]+=(x[0]-m[0])*(x[0]-m[0]);
-            v[1]+=(x[1]-m[1])*(x[1]-m[1]);
-            v[2]+=(x[2]-m[2])*(x[2]-m[2]);
-        }
-        int n = s.size();
-        return new double[]{ Math.sqrt(v[0]/n), Math.sqrt(v[1]/n), Math.sqrt(v[2]/n) };
-    }
-    private double[] variance(List<float[]> s) {
-        double[] m = mean(s);
-        double[] v = new double[3];
-        for (float[] x : s) {
-            v[0]+=(x[0]-m[0])*(x[0]-m[0]);
-            v[1]+=(x[1]-m[1])*(x[1]-m[1]);
-            v[2]+=(x[2]-m[2])*(x[2]-m[2]);
-        }
-        int n = s.size(); v[0]/=n; v[1]/=n; v[2]/=n;
-        return v;
-    }
-
-    private String getSensorName(int type) {
-        switch (type) {
-            case Sensor.TYPE_ACCELEROMETER:       return "加速度计";
-            case Sensor.TYPE_GYROSCOPE:           return "陀螺仪";
-            case Sensor.TYPE_MAGNETIC_FIELD:      return "磁力计";
-            case Sensor.TYPE_PRESSURE:            return "气压计";
-            case Sensor.TYPE_LIGHT:               return "光线传感器";
-            case Sensor.TYPE_PROXIMITY:           return "接近传感器";
-            case Sensor.TYPE_GRAVITY:             return "重力传感器";
-            case Sensor.TYPE_LINEAR_ACCELERATION: return "线性加速度";
-            case Sensor.TYPE_ROTATION_VECTOR:     return "旋转矢量";
-            case Sensor.TYPE_STEP_COUNTER:        return "计步器";
-            case Sensor.TYPE_HEART_RATE:          return "心率";
-            default:                              return "传感器#" + type;
-        }
-    }
-
-    @Override
-    public void onDestroyView() {
-        super.onDestroyView();
-        if (stopSnapRunnable != null) handler.removeCallbacks(stopSnapRunnable);
-        tvAccel = tvGyro = tvActivity = tvFingerprint = tvSensorList = tvPressure = null;
-        progressBar = null; btnSnap = null;
     }
 }
