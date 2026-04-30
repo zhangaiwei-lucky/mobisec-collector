@@ -32,6 +32,13 @@
     <!-- Android 10+ EXIF GPS 读取（需用户授权）-->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION"/>
 
+    <!-- 气压计硬件声明：required=false 不强制要求设备具备，
+         但能让 Play Store 的 hardware 列表把"气压计"标出来，
+         也方便用户在缺硬件时理解"无气压数据"是设备原因而非 app bug。 -->
+    <uses-feature
+        android:name="android.hardware.sensor.barometer"
+        android:required="false"/>
+
     <!-- Android 11+ 包可见性：声明后即可枚举所有包（配合 QUERY_ALL_PACKAGES）-->
     <queries>
         <intent>

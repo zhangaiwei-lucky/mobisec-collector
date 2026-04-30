@@ -9,6 +9,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Process;
 import android.os.SystemClock;
+import android.util.Log;
 
 import androidx.annotation.AnyThread;
 import androidx.annotation.MainThread;
@@ -49,6 +50,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * 这四个 API 与之交互。
  */
 public final class SensorSamplingEngine {
+
+    private static final String TAG = "SensorEngine";
 
     /** 录制完成回调；保证在调用方提供的 callbackHandler 线程上分发。 */
     public interface RecordingListener {
@@ -121,8 +124,23 @@ public final class SensorSamplingEngine {
         if (gyroSensor != null) {
             sm.registerListener(eventListener, gyroSensor, config.gyroDelay, sensorHandler);
         }
-        if (pressureSensor != null) {
-            sm.registerListener(eventListener, pressureSensor, config.pressureDelay, sensorHandler);
+
+        // ── 气压计诊断日志 ─────────────────────────────────────────
+        // 真机定位"气压计为何不工作"的第一手信息：先看硬件是否存在，
+        // 再看 registerListener 是否被系统接受，最后在 handleEvent 里看
+        // 回调是否真的到达。三个点合起来能立刻区分是「无硬件 / 注册失败 / 回调未触达」。
+        if (pressureSensor == null) {
+            Log.i(TAG, "TYPE_PRESSURE: sensor == null（本设备无气压计或被 ROM 屏蔽）");
+        } else {
+            Log.i(TAG, "TYPE_PRESSURE: sensor present"
+                    + " name=" + pressureSensor.getName()
+                    + " vendor=" + pressureSensor.getVendor()
+                    + " minDelayUs=" + pressureSensor.getMinDelay()
+                    + " resolution=" + pressureSensor.getResolution()
+                    + " configDelay=" + config.pressureDelay);
+            boolean registered = sm.registerListener(
+                    eventListener, pressureSensor, config.pressureDelay, sensorHandler);
+            Log.i(TAG, "TYPE_PRESSURE: registerListener returned " + registered);
         }
 
         started = true;
@@ -245,6 +263,7 @@ public final class SensorSamplingEngine {
                 next = prev.withGyro(new Vector3(v[0], v[1], v[2]), ts);
                 break;
             case Sensor.TYPE_PRESSURE:
+                Log.d(TAG, "pressure callback v[0]=" + v[0]);
                 next = prev.withPressure(v[0], ts);
                 break;
             default:
