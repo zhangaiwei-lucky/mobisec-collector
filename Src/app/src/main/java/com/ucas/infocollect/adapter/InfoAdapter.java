@@ -21,11 +21,6 @@ import com.ucas.infocollect.model.RowType;
 
 import java.util.List;
 
-/**
- * 通用信息列表适配器
- * 支持 HEADER / ITEM / APP_ITEM 三种行类型。
- * APP_ITEM 显示应用图标、名称、包名、权限徽章，支持点击跳转详情。
- */
 public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
     private static final int TYPE_HEADER   = 0;
@@ -110,7 +105,6 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         h.name.setText(entry.getKey());
         h.pkg.setText(packageName != null ? packageName : "");
 
-        // 加载应用图标
         if (packageName != null) {
             try {
                 PackageManager pm = h.itemView.getContext().getPackageManager();
@@ -123,7 +117,6 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             h.icon.setImageResource(android.R.drawable.sym_def_app_icon);
         }
 
-        // 权限徽章
         if (entry.getRiskLevel() == RiskLevel.HIGH) {
             h.permBadge.setVisibility(View.VISIBLE);
             h.permBadge.setText(entry.getValue());
@@ -131,7 +124,6 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             h.permBadge.setVisibility(View.GONE);
         }
 
-        // 点击跳转详情
         h.itemView.setOnClickListener(v -> {
             if (clickListener != null && packageName != null) {
                 clickListener.onAppItemClick(packageName);
@@ -142,7 +134,6 @@ public class InfoAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     @Override
     public int getItemCount() { return items.size(); }
 
-    // ─── ViewHolder 内部类 ──────────────────────────────────────────
 
     static class HeaderHolder extends RecyclerView.ViewHolder {
         TextView title;

@@ -18,17 +18,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 位置信息收集器
- *
- * 隐私价值分析：
- * - 精确 GPS 坐标可定位用户所在地（精度 < 10m）
- * - 可推断住所、工作地点、行动轨迹
- * - 结合时间可构建用户作息规律画像
- * - Android 10+ 后台定位需要 ACCESS_BACKGROUND_LOCATION（本 App 未申请）
- *
- * 本模块展示"哪些信息能收集、哪些不能收集"，体现权限机制的保护作用。
- */
 public class LocationCollector implements InfoCollector {
 
     @Override
@@ -72,7 +61,6 @@ public class LocationCollector implements InfoCollector {
             items, "LocationManager", "定位服务不可用");
         if (lm == null) return;
 
-        // 优先 GPS，其次 Network
         Location loc = null;
         String provider = "无";
         try {
@@ -126,7 +114,6 @@ public class LocationCollector implements InfoCollector {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
         CollectorUtils.add(items, "时间戳", sdf.format(new Date(loc.getTime())));
 
-        // 逆地理编码（若设备联网）
         try {
             if (Geocoder.isPresent()) {
                 Geocoder gc = new Geocoder(context, Locale.getDefault());
@@ -146,7 +133,6 @@ public class LocationCollector implements InfoCollector {
             CollectorUtils.add(items, "地址解析", "网络不可用或 Geocoder 异常");
         }
 
-        // 可用 Provider 列表
         CollectorUtils.addHeader(items, "可用定位 Provider");
         for (String p : lm.getAllProviders()) {
             boolean enabled = lm.isProviderEnabled(p);

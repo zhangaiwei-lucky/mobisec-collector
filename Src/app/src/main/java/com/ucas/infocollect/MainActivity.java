@@ -42,9 +42,6 @@ public class MainActivity extends AppCompatActivity {
         List<PagerAdapter.TabSpec> tabSpecs = buildTabSpecs();
         PagerAdapter adapter = new PagerAdapter(this, tabSpecs);
         viewPager.setAdapter(adapter);
-        // 不设置 offscreenPageLimit，让 Fragment 按需创建
-        // 这样 UserFragment 只在切换到该 tab 时才初始化，此时 app 已获得焦点
-        // 传感器 Fragment 通过 onResume/onPause 自行管理注册状态
 
         new TabLayoutMediator(tabLayout, viewPager,
             (tab, position) -> tab.setText(adapter.getTabTitle(position))

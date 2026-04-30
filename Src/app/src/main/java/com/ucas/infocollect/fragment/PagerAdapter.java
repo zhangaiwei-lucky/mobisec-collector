@@ -8,9 +8,6 @@ import androidx.viewpager2.adapter.FragmentStateAdapter;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * ViewPager2 适配器，按构造传入的页面工厂管理标签页
- */
 public class PagerAdapter extends FragmentStateAdapter {
 
     public interface FragmentFactory {

@@ -15,7 +15,7 @@ public final class InfoRow {
     @NonNull  private final String     key;
     @NonNull  private final String     value;
     @NonNull  private final RiskLevel  riskLevel;
-    @Nullable private final String     payload; // APP_ITEM 存储 packageName
+    @Nullable private final String     payload;
 
     private InfoRow(
             @NonNull  RowType   type,
@@ -43,8 +43,7 @@ public final class InfoRow {
         return new InfoRow(RowType.ITEM, key, value, riskLevel, null);
     }
 
-    /** 可点击的应用行，payload 为 packageName */
-    @NonNull
+        @NonNull
     public static InfoRow appItem(@Nullable String appName, @Nullable String permSummary,
                                   @NonNull RiskLevel riskLevel, @Nullable String packageName) {
         return new InfoRow(RowType.APP_ITEM, appName, permSummary, riskLevel, packageName);

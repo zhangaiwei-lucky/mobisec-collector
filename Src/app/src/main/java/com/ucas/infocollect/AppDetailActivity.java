@@ -34,13 +34,6 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * 应用详情页 —— 展示单个应用的安全画像：
- * - 基本信息（UID、安装来源、targetSdk、签名证书 SHA-256）
- * - 危险权限 / 普通权限（已授予 vs 仅声明）
- * - 导出组件（Attack Surface）
- * - Intent Filter / Deep Link（外部可唤起的入口）
- */
 public class AppDetailActivity extends AppCompatActivity {
 
     public static final String EXTRA_PACKAGE = "package_name";
@@ -110,16 +103,12 @@ public class AppDetailActivity extends AppCompatActivity {
         });
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 构建详情数据
-    // ─────────────────────────────────────────────────────────────
 
     private List<InfoRow> buildDetailRows(String packageName) {
         List<InfoRow> items = new ArrayList<>();
         PackageManager pm = getPackageManager();
 
         try {
-            // 一次性获取权限 + 组件
             int flags = PackageManager.GET_PERMISSIONS
                 | PackageManager.GET_ACTIVITIES
                 | PackageManager.GET_SERVICES
@@ -128,7 +117,6 @@ public class AppDetailActivity extends AppCompatActivity {
             PackageInfo pi = pm.getPackageInfo(packageName, flags);
             ApplicationInfo ai = pi.applicationInfo;
 
-            // ── 基本信息 ────────────────────────────────────────────
             CollectorUtils.addHeader(items, "应用基本信息");
             CollectorUtils.add(items, "应用名称", pm.getApplicationLabel(ai).toString());
             CollectorUtils.add(items, "包名",    packageName);
@@ -150,7 +138,6 @@ public class AppDetailActivity extends AppCompatActivity {
                 + "\n（其他应用无法直接读取，体现 Android 沙箱隔离）");
             CollectorUtils.add(items, "APK 路径", ai.sourceDir);
 
-            // 安装来源
             String installer = "未知";
             try {
                 installer = pm.getInstallerPackageName(packageName);
@@ -164,21 +151,18 @@ public class AppDetailActivity extends AppCompatActivity {
                 CollectorUtils.add(items, "安装来源", installer);
             }
 
-            // 明文 HTTP
             boolean cleartext = (ai.flags & ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC) != 0;
             if (cleartext) CollectorUtils.addHighRisk(items, "明文 HTTP", "允许（MITM 风险）");
             else           CollectorUtils.add(items, "明文 HTTP", "不允许（强制 HTTPS）");
 
-            // 签名证书 SHA-256
             CollectorUtils.addHeader(items, "签名证书");
             addSigningInfo(pm, packageName, items);
 
-            // ── 权限详情 ─────────────────────────────────────────────
             String[] requestedPerms = pi.requestedPermissions;
             int[]    permFlags      = pi.requestedPermissionsFlags;
 
             if (requestedPerms != null && requestedPerms.length > 0) {
-                List<int[]> dangIdx  = new ArrayList<>(); // {index, granted, protLevel}
+                List<int[]> dangIdx  = new ArrayList<>();
                 List<int[]> otherIdx = new ArrayList<>();
 
                 for (int i = 0; i < requestedPerms.length; i++) {
@@ -194,7 +178,6 @@ public class AppDetailActivity extends AppCompatActivity {
                     else otherIdx.add(entry);
                 }
 
-                // 危险权限：授予的在前
                 dangIdx.sort((a, b) -> b[1] - a[1]);
                 CollectorUtils.addHeader(items,
                     "危险权限（" + dangIdx.size() + " 项声明"
@@ -226,7 +209,6 @@ public class AppDetailActivity extends AppCompatActivity {
                 CollectorUtils.add(items, "无权限声明", "该应用未声明任何权限");
             }
 
-            // ── 组件概览 ─────────────────────────────────────────────
             int actCount = pi.activities != null ? pi.activities.length : 0;
             int svcCount = pi.services   != null ? pi.services.length   : 0;
             int recCount = pi.receivers  != null ? pi.receivers.length   : 0;
@@ -238,7 +220,6 @@ public class AppDetailActivity extends AppCompatActivity {
             CollectorUtils.add(items, "BroadcastReceiver",String.valueOf(recCount));
             CollectorUtils.add(items, "ContentProvider",  String.valueOf(prvCount));
 
-            // ── 导出组件（攻击面）────────────────────────────────────
             CollectorUtils.addHeader(items, "导出组件（对外暴露的攻击面）");
             int expAct = 0; List<ActivityInfo> expActivities = new ArrayList<>();
             if (pi.activities != null) for (ActivityInfo a : pi.activities) {
@@ -258,7 +239,6 @@ public class AppDetailActivity extends AppCompatActivity {
             addExportedRow(items, "导出 Receiver",         expRec);
             addExportedRow(items, "导出 ContentProvider",  expPrv);
 
-            // ── Intent Scheme / Deep Link ────────────────────────────
             if (!expActivities.isEmpty()) {
                 CollectorUtils.addHeader(items, "Intent Scheme / Deep Link 分析");
                 CollectorUtils.add(items, "说明",
@@ -284,7 +264,6 @@ public class AppDetailActivity extends AppCompatActivity {
                 }
             }
 
-            // ── ContentProvider 详情 ─────────────────────────────────
             if (!expProviders.isEmpty()) {
                 CollectorUtils.addHeader(items, "ContentProvider 详情（路径遍历攻击面初筛）");
                 CollectorUtils.add(items, "说明",
@@ -349,7 +328,6 @@ public class AppDetailActivity extends AppCompatActivity {
             byte[] digest = md.digest(sig.toByteArray());
             StringBuilder sb = new StringBuilder();
             for (byte b : digest) sb.append(String.format("%02X", b));
-            // 每 8 字节插入空格方便阅读
             String hex = sb.toString();
             StringBuilder formatted = new StringBuilder();
             for (int i = 0; i < hex.length(); i += 8) {
@@ -367,9 +345,6 @@ public class AppDetailActivity extends AppCompatActivity {
         else           CollectorUtils.add(items, label, "无");
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 工具方法
-    // ─────────────────────────────────────────────────────────────
 
     private String protectionLevelLabel(int level) {
         switch (level & PermissionInfo.PROTECTION_MASK_BASE) {

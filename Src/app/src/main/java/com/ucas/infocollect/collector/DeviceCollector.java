@@ -23,24 +23,12 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 设备与系统信息收集器
- *
- * 覆盖范围：
- * - 硬件标识（型号、序列号、Android ID）
- * - 系统版本与安全补丁
- * - CPU / 内存 / 存储规格
- * - 屏幕参数
- * - 运营商与 IMEI（需 READ_PHONE_STATE）
- * - Root / 开发者选项状态
- */
 public class DeviceCollector implements InfoCollector {
 
     @Override
     public List<InfoRow> collect(Context context) {
         List<InfoRow> items = new ArrayList<>();
 
-        // ── 基本硬件信息（无需权限）──────────────────────────────
         CollectorUtils.addHeader(items, "基本设备信息");
         CollectorUtils.add(items, "品牌",        Build.BRAND);
         CollectorUtils.add(items, "厂商",        Build.MANUFACTURER);
@@ -50,23 +38,20 @@ public class DeviceCollector implements InfoCollector {
         CollectorUtils.add(items, "硬件版本",    Build.HARDWARE);
         CollectorUtils.add(items, "主板",        Build.BOARD);
 
-        // ── Android 版本与安全信息（无需权限）──────────────────────
         CollectorUtils.addHeader(items, "系统版本与安全");
         CollectorUtils.add(items, "Android 版本", Build.VERSION.RELEASE);
         CollectorUtils.add(items, "API Level",    String.valueOf(Build.VERSION.SDK_INT));
         CollectorUtils.add(items, "安全补丁日期", Build.VERSION.SECURITY_PATCH);
         CollectorUtils.add(items, "Build 指纹",   Build.FINGERPRINT);
-        CollectorUtils.add(items, "Build 类型",   Build.TYPE);       // user/userdebug/eng
-        CollectorUtils.add(items, "Build 标签",   Build.TAGS);       // release-keys/test-keys
+        CollectorUtils.add(items, "Build 类型",   Build.TYPE);
+        CollectorUtils.add(items, "Build 标签",   Build.TAGS);
 
-        // ── Android ID（可用于设备追踪，无需权限）──────────────────
         CollectorUtils.addHeader(items, "设备标识符");
         @SuppressLint("HardwareIds")
         String androidId = Settings.Secure.getString(
             context.getContentResolver(), Settings.Secure.ANDROID_ID);
-        CollectorUtils.add(items, "Android ID", CollectorUtils.HIGH_RISK_PREFIX + androidId);  // 设备唯一 ID，可追踪用户
+        CollectorUtils.add(items, "Android ID", CollectorUtils.HIGH_RISK_PREFIX + androidId);
 
-        // IMEI（需 READ_PHONE_STATE 权限）
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE)
                 == PackageManager.PERMISSION_GRANTED) {
             try {
@@ -101,7 +86,6 @@ public class DeviceCollector implements InfoCollector {
                 CollectorUtils.DegradeReason.PERMISSION_DENIED, "未授予 READ_PHONE_STATE 权限");
         }
 
-        // ── CPU 信息（无需权限，读取 /proc/cpuinfo）──────────────────
         CollectorUtils.addHeader(items, "处理器信息");
         CollectorUtils.add(items, "CPU ABI(s)",    Build.SUPPORTED_ABIS[0]);
         CollectorUtils.add(items, "CPU 核心数",    String.valueOf(Runtime.getRuntime().availableProcessors()));
@@ -110,7 +94,6 @@ public class DeviceCollector implements InfoCollector {
         CollectorUtils.add(items, "CPU Hardware", cpuHardware.isEmpty() ? "N/A" : cpuHardware);
         CollectorUtils.add(items, "CPU 型号",     cpuModel.isEmpty()    ? "N/A" : cpuModel);
 
-        // ── 内存信息（无需权限）──────────────────────────────────
         CollectorUtils.addHeader(items, "内存与存储");
         ActivityManager am = CollectorUtils.safeService(
             context,
@@ -133,7 +116,6 @@ public class DeviceCollector implements InfoCollector {
             }
         }
 
-        // 内部存储
         StatFs stat = new StatFs(Environment.getDataDirectory().getPath());
         long blockSize  = stat.getBlockSizeLong();
         long totalBlocks = stat.getBlockCountLong();
@@ -141,7 +123,6 @@ public class DeviceCollector implements InfoCollector {
         CollectorUtils.add(items, "内部存储总量", formatBytes(blockSize * totalBlocks));
         CollectorUtils.add(items, "内部存储可用", formatBytes(blockSize * availBlocks));
 
-        // ── 屏幕信息（无需权限）──────────────────────────────────
         CollectorUtils.addHeader(items, "屏幕参数");
         WindowManager wm = CollectorUtils.safeService(
             context,
@@ -164,7 +145,6 @@ public class DeviceCollector implements InfoCollector {
             }
         }
 
-        // ── Root / 安全状态（无需权限）───────────────────────────
         CollectorUtils.addHeader(items, "安全状态");
         CollectorUtils.add(items, "是否 Root",         isRooted() ? CollectorUtils.HIGH_RISK_PREFIX + "是" : "否");
         CollectorUtils.add(items, "开发者选项",
@@ -183,7 +163,6 @@ public class DeviceCollector implements InfoCollector {
         return items;
     }
 
-    /** 检测设备是否已 Root（检查常见的 su 路径）*/
     private boolean isRooted() {
         String[] paths = {
             "/system/app/Superuser.apk", "/sbin/su", "/system/bin/su",
@@ -197,7 +176,6 @@ public class DeviceCollector implements InfoCollector {
         return false;
     }
 
-    /** 读取 /proc/cpuinfo 中指定字段的值 */
     private String readCpuInfo(String key) {
         try (BufferedReader br = new BufferedReader(new FileReader("/proc/cpuinfo"))) {
             String line;

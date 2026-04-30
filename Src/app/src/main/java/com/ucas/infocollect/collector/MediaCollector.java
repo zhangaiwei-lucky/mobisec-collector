@@ -22,16 +22,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 媒体文件元数据收集器
- *
- * 不读取图片/视频内容，只读取元数据（MediaStore + EXIF），
- * 展示媒体数据的隐私泄露潜力：
- * - 照片数量、拍摄时间分布
- * - EXIF 中的 GPS 坐标（拍摄位置）
- * - 相机型号、软件信息
- * - 视频/音频统计
- */
 public class MediaCollector implements InfoCollector {
 
     private static final int MAX_EXIF_SAMPLE = 5;
@@ -40,7 +30,6 @@ public class MediaCollector implements InfoCollector {
     public List<InfoRow> collect(Context context) {
         List<InfoRow> items = new ArrayList<>();
 
-        // 检查权限
         boolean hasPerm = hasMediaPermission(context);
         CollectorUtils.addHeader(items, "媒体存储权限状态");
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -65,15 +54,12 @@ public class MediaCollector implements InfoCollector {
             return items;
         }
 
-        // ── 图片统计 ─────────────────────────────────────────────────
         CollectorUtils.addHeader(items, "图片统计（MediaStore）");
         collectImageStats(context, items);
 
-        // ── EXIF GPS 分析 ─────────────────────────────────────────────
         CollectorUtils.addHeader(items, "EXIF 元数据分析（前 " + MAX_EXIF_SAMPLE + " 张含 GPS 的照片）");
         collectExifGps(context, items);
 
-        // ── 视频统计 ─────────────────────────────────────────────────
         CollectorUtils.addHeader(items, "视频统计（MediaStore）");
         collectVideoStats(context, items);
 
@@ -113,7 +99,6 @@ public class MediaCollector implements InfoCollector {
 
             if (total == 0) return;
 
-            // 最新一张的时间
             if (c.moveToFirst()) {
                 long dateTaken = c.getLong(1);
                 if (dateTaken > 0) {
@@ -123,8 +108,7 @@ public class MediaCollector implements InfoCollector {
                 }
             }
 
-            // 按年份分组统计
-            int[] yearBuckets = new int[10]; // 最近10年
+            int[] yearBuckets = new int[10];
             int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
             long totalSize = 0;
             c.moveToFirst();
@@ -177,7 +161,7 @@ public class MediaCollector implements InfoCollector {
 
             while (c.moveToNext() && gpsFound < MAX_EXIF_SAMPLE) {
                 scanned++;
-                if (scanned > 200) break; // 最多扫描 200 张
+                if (scanned > 200) break;
 
                 long id   = c.getLong(0);
                 String name = c.getString(1);

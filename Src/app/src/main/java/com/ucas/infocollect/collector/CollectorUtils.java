@@ -16,7 +16,6 @@ public final class CollectorUtils {
     private static final String DEFAULT_NA = "N/A";
 
     private CollectorUtils() {
-        // Utility class
     }
 
     public static void add(List<InfoRow> list, String key, String value) {
@@ -75,7 +74,6 @@ public final class CollectorUtils {
         }
     }
 
-    /** 添加可点击的 APP_ITEM 行（应用列表使用） */
     public static void addAppItem(List<InfoRow> list, String appName, String permSummary,
                                   RiskLevel risk, String packageName) {
         list.add(InfoRow.appItem(appName, permSummary, risk, packageName));

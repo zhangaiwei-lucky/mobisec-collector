@@ -17,14 +17,6 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 已安装应用与使用情况收集器
- *
- * 展示内容：
- * - 统计概览：用户/系统/高危权限应用数量
- * - 用户应用列表（APP_ITEM 可点击 → 详情页）：显示图标 + 危险权限徽章
- * - 应用使用统计（需 UsageStats 权限）
- */
 public class AppCollector implements InfoCollector {
 
     private static final int MAX_USER_APP_DISPLAY    = 60;
@@ -39,16 +31,13 @@ public class AppCollector implements InfoCollector {
         "BIND_NOTIFICATION_LISTENER_SERVICE", "BIND_DEVICE_ADMIN"
     };
 
-    // 安全/分析工具关键词（仅匹配用户应用，且排除 VPN 关键词）
     private static final String[] SECURITY_KEYWORDS = {
         "antivirus", "360", "kaspersky", "avast", "mcafee",
         "supersu", "magisk", "xposed", "frida", "objection"
     };
 
-    // VPN 关键词单独处理（系统 VPN 组件不应标为"分析工具"）
     private static final String[] VPN_KEYWORDS = { "vpn" };
 
-    // 系统包名前缀白名单：这些前缀的应用不归入安全/VPN 工具
     private static final String[] SYSTEM_PKG_PREFIXES = {
         "com.android.", "android.", "com.google.", "com.coloros.",
         "com.oppo.", "com.realme.", "com.miui.", "com.xiaomi.",
@@ -78,7 +67,6 @@ public class AppCollector implements InfoCollector {
             return items;
         }
 
-        // ── 统计概览 ─────────────────────────────────────────────────
         CollectorUtils.addHeader(items, "应用统计概览");
         int userApps = 0, sysApps = 0, highPermApps = 0;
         List<String> securityTools = new ArrayList<>();
@@ -89,7 +77,6 @@ public class AppCollector implements InfoCollector {
             if (isSys) sysApps++; else userApps++;
             if (hasSensitivePerm(pkg)) highPermApps++;
 
-            // 安全工具识别：仅匹配用户应用，且排除系统包名前缀
             boolean isSysPkg = isSystemPackageName(pkg.packageName);
             if (!isSys && !isSysPkg) {
                 String pkgLower = pkg.packageName.toLowerCase(Locale.ROOT);
@@ -112,7 +99,6 @@ public class AppCollector implements InfoCollector {
             vpnApps.isEmpty() ? "无" : String.join(", ", vpnApps));
         CollectorUtils.add(items, "提示", "点击下方应用可查看完整权限详情 →");
 
-        // ── 用户应用列表（APP_ITEM 可点击）────────────────────────────
         CollectorUtils.addHeader(items, "用户安装应用（点击查看权限详情）");
         int count = 0;
         for (PackageInfo pkg : packages) {
@@ -135,7 +121,6 @@ public class AppCollector implements InfoCollector {
             CollectorUtils.addAppItem(items, label, permSummary, risk, pkg.packageName);
         }
 
-        // ── 应用使用统计 ──────────────────────────────────────────────
         CollectorUtils.addHeader(items, "应用使用统计（过去7天）");
         if (hasUsageStatsPerm(context)) {
             collectUsageStats(context, items);

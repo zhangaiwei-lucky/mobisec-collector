@@ -26,12 +26,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.TimeZone;
 
-/**
- * 用户数据收集器
- *
- * 注意：本 Fragment 通过 BaseInfoFragment 的后台线程加载，
- * 且只在用户切换到"用户"标签时才初始化，确保 App 持有焦点（剪贴板读取需要）。
- */
 public class UserDataCollector implements InfoCollector {
 
     private static final int MAX_CONTACT_DISPLAY = 10;
@@ -41,19 +35,15 @@ public class UserDataCollector implements InfoCollector {
     public List<InfoRow> collect(Context context) {
         List<InfoRow> items = new ArrayList<>();
 
-        // ── 剪贴板（需要焦点窗口，Android 10+）──────────────────
         CollectorUtils.addHeader(items, "剪贴板内容（需 App 处于前台焦点）");
         readClipboard(context, items);
 
-        // ── 锁屏安全状态（KeyguardManager，无需权限）──────────────
         CollectorUtils.addHeader(items, "锁屏安全状态");
         readLockScreenInfo(context, items);
 
-        // ── 系统账户（GET_ACCOUNTS）──────────────────────────────
         CollectorUtils.addHeader(items, "设备关联账户");
         readAccounts(context, items);
 
-        // ── 联系人（READ_CONTACTS）──────────────────────────────
         CollectorUtils.addHeader(items, "联系人（前10条）");
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -62,7 +52,6 @@ public class UserDataCollector implements InfoCollector {
             CollectorUtils.add(items, "状态", "未授予 READ_CONTACTS 权限");
         }
 
-        // ── 通话记录（READ_CALL_LOG）────────────────────────────
         CollectorUtils.addHeader(items, "通话记录（前10条）");
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -71,14 +60,12 @@ public class UserDataCollector implements InfoCollector {
             CollectorUtils.add(items, "状态", "未授予 READ_CALL_LOG 权限");
         }
 
-        // ── 用户偏好（无需权限）──────────────────────────────────
         CollectorUtils.addHeader(items, "用户偏好与设备习惯");
         readPreferences(context, items);
 
         return items;
     }
 
-    // ─────────────────────────────────────────────────────────────
 
     private void readClipboard(Context context, List<InfoRow> items) {
         try {
@@ -109,7 +96,6 @@ public class UserDataCollector implements InfoCollector {
             CollectorUtils.add(items, "剪贴板 MIME 类型",
                 clip.getDescription().getMimeType(0));
         } catch (SecurityException e) {
-            // Android 10+ 后台读取剪贴板会抛 SecurityException
             CollectorUtils.add(items, "剪贴板", "Android 10+ 限制：需在前台焦点状态读取\n请点击「刷新」按钮重试");
         } catch (Exception e) {
             CollectorUtils.add(items, "剪贴板读取异常", e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -124,16 +110,13 @@ public class UserDataCollector implements InfoCollector {
                 CollectorUtils.add(items, "锁屏", "KeyguardManager 不可用");
                 return;
             }
-            // isDeviceSecure：是否设置了 PIN/图案/密码（API 23+）
             boolean isSecure = km.isDeviceSecure();
             CollectorUtils.add(items, "是否设置锁屏密码",
                 isSecure ? CollectorUtils.HIGH_RISK_PREFIX + "是（设备受保护）" : "否（无锁屏）");
 
-            // isKeyguardLocked：当前是否处于锁屏状态
             boolean isLocked = km.isKeyguardLocked();
             CollectorUtils.add(items, "当前是否锁屏", String.valueOf(isLocked));
 
-            // 尝试读取屏幕超时时间（间接判断安全习惯）
             ContentResolver cr = context.getContentResolver();
             String timeout = Settings.System.getString(cr, Settings.System.SCREEN_OFF_TIMEOUT);
             if (timeout != null) {
@@ -144,27 +127,22 @@ public class UserDataCollector implements InfoCollector {
             CollectorUtils.add(items, "锁屏状态读取失败", e.getMessage());
         }
 
-        // 开发者选项和 ADB 状态（多重读取，适配不同 ROM）
         try {
             ContentResolver cr = context.getContentResolver();
 
-            // ADB 调试状态（Settings.Global，通用）
             int adb = Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, -1);
             if (adb == -1) adb = Settings.Secure.getInt(cr, "adb_enabled", 0);
             CollectorUtils.add(items, "ADB 调试",
                 adb == 1 ? CollectorUtils.HIGH_RISK_PREFIX + "已开启（USB 可直接提取数据）" : "关闭");
 
-            // 开发者选项：先读 Global，MIUI/ColorOS 等 ROM 可能存在 Secure 里
             int dev = Settings.Global.getInt(cr,
                 Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, -1);
             if (dev == -1) {
-                // fallback：部分 ROM 的 key 不同
                 String devStr = Settings.Global.getString(cr, "development_settings_enabled");
                 if (devStr == null)
                     devStr = Settings.Secure.getString(cr, "development_settings_enabled");
                 dev = "1".equals(devStr) ? 1 : 0;
             }
-            // 如果 ADB 已开，开发者模式必然开启
             if (adb == 1) dev = 1;
             CollectorUtils.add(items, "开发者选项",
                 dev == 1 ? CollectorUtils.HIGH_RISK_PREFIX + "已开启" : "关闭");
@@ -175,7 +153,6 @@ public class UserDataCollector implements InfoCollector {
     }
 
     private void readAccounts(Context context, List<InfoRow> items) {
-        // 尝试有权限和无权限两种路径
         boolean hasPermission = ContextCompat.checkSelfPermission(
             context, Manifest.permission.GET_ACCOUNTS) == PackageManager.PERMISSION_GRANTED;
         CollectorUtils.add(items, "GET_ACCOUNTS 权限", hasPermission ? "已授权" : "未授权");
@@ -184,7 +161,7 @@ public class UserDataCollector implements InfoCollector {
             AccountManager am = AccountManager.get(context);
             Account[] accounts = hasPermission
                 ? am.getAccounts()
-                : am.getAccountsByType("com.google");  // 部分账户类型无需权限
+                : am.getAccountsByType("com.google");
 
             if (accounts == null || accounts.length == 0) {
                 CollectorUtils.add(items, "账户", "未获取到账户信息");
@@ -281,7 +258,6 @@ public class UserDataCollector implements InfoCollector {
                 cr, Settings.System.ACCELEROMETER_ROTATION);
             CollectorUtils.add(items, "自动旋转", "1".equals(autoRotate) ? "开启" : "关闭");
 
-            // 安装未知来源
             String installUnknown;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 installUnknown = "请查看设置（Android 8+ 改为单应用授权）";

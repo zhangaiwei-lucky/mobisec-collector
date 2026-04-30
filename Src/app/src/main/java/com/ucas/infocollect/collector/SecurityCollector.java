@@ -1,5 +1,9 @@
 package com.ucas.infocollect.collector;
 
+import android.app.ActivityManager;
+import android.app.AppOpsManager;
+import android.app.usage.UsageStats;
+import android.app.usage.UsageStatsManager;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
@@ -8,6 +12,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
+import android.os.Process;
+import android.util.Log;
 
 import com.ucas.infocollect.model.InfoRow;
 
@@ -19,45 +25,16 @@ import java.io.RandomAccessFile;
 import java.lang.reflect.Method;
 import java.util.AbstractMap;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
-/**
- * 安全分析收集器
- *
- * 覆盖课件中的核心攻击面：
- * 1. 导出组件扫描
- *    - 导出的 Activity  → Intent Scheme URL 攻击入口
- *    - 导出的 ContentProvider → 路径遍历攻击入口
- *    - 导出的 Service / BroadcastReceiver → IPC 攻击入口
- *
- * 2. SELinux 安全状态
- *    - 是否处于 Enforcing 模式
- *    - 宽松模式下几乎所有 MAC 策略失效
- *
- * 3. 系统敏感文件访问检测
- *    - gesture.key / password.key / access_control.key
- *    - 恶意软件案例：删除这些文件即可绕过锁屏
- *
- * 4. APK 签名方案分析（ Janus 漏洞）
- *    - V1-only 签名的 App 在 Android 5.1-8.0 上易受 Janus 攻击
- *    - Janus(CVE-2017-13156)：DEX 文件可附加在合法 APK 前而不破坏签名
- *
- * 5. 过权限（Over-Privilege）分析
- *    - 统计声明了但从不使用的权限
- *    - 研究表明 56% 的权限声明存在过度申请
- *
- * 6. 运行中的服务 / 进程（ActivityManager）
- *    - 检测是否存在可疑后台服务（挖矿木马特征：CPU 服务）
- *
- * 7. 网络安全配置
- *    - 允许明文 HTTP 的应用（中间人攻击面）
- *    -  HTTPS 降级攻击案例
- */
 public class SecurityCollector implements InfoCollector {
 
     private static final int MAX_SIGNATURE_SAMPLE = 5;
@@ -140,46 +117,34 @@ public class SecurityCollector implements InfoCollector {
         PackageManager pm = context.getPackageManager();
         List<InfoRow> items = new ArrayList<>();
 
-        // ── 1. SELinux 状态（：SEAndroid）────────────────
         CollectorUtils.addHeader(items, "SELinux / SEAndroid 安全状态");
         collectSeLinux(items);
 
-        // ── 2. 系统敏感文件（ ：锁屏绕过案例）────────
         CollectorUtils.addHeader(items, "系统敏感文件可访问性");
         checkSensitiveFiles(items);
 
-        // ── 3. 导出组件扫描（：Intent攻击 / CP路径遍历）──
         CollectorUtils.addHeader(items, "导出组件扫描（Intent/IPC 攻击面）");
         scanExportedComponents(pm, items);
 
-        // ── 4. ContentProvider 路径遍历风险────────────
         CollectorUtils.addHeader(items, "Content Provider 路径遍历风险");
         scanDangerousProviders(pm, items);
 
-        // ── 5. APK 签名方案分析（Janus CVE-2017-13156）────────────
         CollectorUtils.addHeader(items, "APK 签名方案 / Janus 漏洞");
         analyzeSignatureSchemes(pm, items);
 
-        // ── 6. 过权限应用统计──────────────────
         CollectorUtils.addHeader(items, "过权限应用 Top 10");
         scanOverPrivilegedApps(pm, items);
 
-        // ── 7. 允许明文 HTTP 的应用（HTTPS降级风险）──────────────
         CollectorUtils.addHeader(items, "允许明文 HTTP 的应用（静态配置风险初筛）");
         scanCleartextApps(pm, items);
 
-        // ── 8. 运行中服务 / 可疑后台进程（挖矿木马特征）──────────
         CollectorUtils.addHeader(items, "运行中进程与可疑服务");
-        checkRunningProcesses(items);
+        checkRunningProcesses(context, items);
 
         return items;
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 1. SELinux 状态
-    // ─────────────────────────────────────────────────────────────
     private void collectSeLinux(List<InfoRow> items) {
-        // 方法1：读取 /sys/fs/selinux/enforce（优先来源，1=Enforcing，0=Permissive）
         String enforceRaw = readFile("/sys/fs/selinux/enforce").trim();
         Boolean fileEnforcing = null;
         if (!enforceRaw.isEmpty()) {
@@ -193,8 +158,6 @@ public class SecurityCollector implements InfoCollector {
                 "无法读取（Android 系统限制，请以 adb shell getenforce 复核）");
         }
 
-        // 方法2：读取 /proc/sys/kernel/perf_event_paranoid（内核安全参数）
-        // 注意：-1 在某些内核含义为"无限制"，读取失败时显示系统限制而非标高危
         String paranoidRaw = readFile("/proc/sys/kernel/perf_event_paranoid").trim();
         if (!paranoidRaw.isEmpty()) {
             try {
@@ -202,11 +165,9 @@ public class SecurityCollector implements InfoCollector {
                 if (val >= 2) {
                     CollectorUtils.add(items, "perf_event 偏执级别", val + "（≥2，安全）");
                 } else if (val >= 0) {
-                    // 0 或 1：确实存在侧信道泄露风险
                     CollectorUtils.add(items, "perf_event 偏执级别",
                         CollectorUtils.HIGH_RISK_PREFIX + val + "（< 2，侧信道泄露风险）");
                 } else {
-                    // val < 0（如 -1）：内核特殊配置，不作为确定高危
                     CollectorUtils.add(items, "perf_event 偏执级别",
                         "无法确认（读取值: " + val + "，属内核特殊配置，系统限制）");
                 }
@@ -217,7 +178,6 @@ public class SecurityCollector implements InfoCollector {
             CollectorUtils.add(items, "perf_event 偏执级别", "无法读取/系统限制");
         }
 
-        // 方法3：通过 Java 反射获取 SELinux 状态（辅助来源，与文件来源交叉比对）
         try {
             Class<?> seLinux = Class.forName("android.os.SELinux");
             Method isSELinuxEnabled = seLinux.getMethod("isSELinuxEnabled");
@@ -227,18 +187,15 @@ public class SecurityCollector implements InfoCollector {
             CollectorUtils.add(items, "SELinux 已启用（反射辅助）", String.valueOf(enabled));
 
             if (fileEnforcing != null) {
-                // 与文件来源交叉比对
                 if (fileEnforcing == enforced) {
                     CollectorUtils.add(items, "SELinux 已强制（反射辅助）",
                         enforced ? "是（与 /sys 来源一致 ✓）" : "否（与 /sys 来源一致）");
                 } else {
-                    // 两个来源不一致，不得确定结论
                     CollectorUtils.add(items, "SELinux 已强制（反射辅助，结果存疑）",
                         "反射返回: " + enforced + "，与 /sys 文件来源不一致，"
                         + "请以 adb shell getenforce 复核");
                 }
             } else {
-                // 文件不可读，仅有反射来源，结论需谨慎
                 CollectorUtils.add(items, "SELinux 已强制（反射，仅供参考）",
                     enforced ? "是（仅反射来源，建议 adb shell getenforce 复核）"
                              : "否（仅反射来源，不能确认为 Permissive，请 adb shell getenforce 复核）");
@@ -247,7 +204,6 @@ public class SecurityCollector implements InfoCollector {
             CollectorUtils.add(items, "SELinux 反射读取", "不支持: " + e.getMessage());
         }
 
-        // ASLR 状态（内存保护）
         String aslr = readFile("/proc/sys/kernel/randomize_va_space").trim();
         if (!aslr.isEmpty()) {
             try {
@@ -262,11 +218,7 @@ public class SecurityCollector implements InfoCollector {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 2. 系统敏感文件
-    // ─────────────────────────────────────────────────────────────
     private void checkSensitiveFiles(List<InfoRow> items) {
-        //  ：恶意软件通过 ADB 删除这些文件绕过锁屏
         String[][] sensitiveFiles = {
             {"/data/system/gesture.key",        "手势锁图案"},
             {"/data/system/password.key",       "PIN/密码哈希"},
@@ -288,11 +240,9 @@ public class SecurityCollector implements InfoCollector {
             if (!exists) {
                 status = "不存在";
             } else if (readable) {
-                // 可读则尝试读前 100 字符
                 String preview = readFilePreview(f[0], 80);
                 status = CollectorUtils.HIGH_RISK_PREFIX + "可读！内容: " + (preview.isEmpty() ? "(空)" : preview);
             } else {
-                // 区分 /proc/net/ 与 /data/system/ 的限制原因
                 if (f[0].startsWith("/proc/net/")) {
                     status = "存在但当前 App 无权限读取（Android 高版本系统限制，非 root 问题）";
                 } else {
@@ -307,14 +257,10 @@ public class SecurityCollector implements InfoCollector {
             + "普通 App 可通过 ConnectivityManager / NetworkInterface 获取部分网络状态，\n"
             + "但不能完整读取内核连接表（系统设计限制，并非需要 root）");
 
-        // /proc/cpuinfo 和 /proc/meminfo（无需权限，课件提到的系统信息）
         String cpuModel = readFirstMatchingLine("/proc/cpuinfo", "Hardware");
         CollectorUtils.add(items, "/proc/cpuinfo 硬件型号", cpuModel.isEmpty() ? "无" : cpuModel);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 3. 导出组件扫描（Intent Scheme URL 攻击面）
-    // ─────────────────────────────────────────────────────────────
     private void scanExportedComponents(PackageManager pm, List<InfoRow> items) {
         List<PackageInfo> packages;
         try {
@@ -330,15 +276,13 @@ public class SecurityCollector implements InfoCollector {
 
         int exportedActivity = 0, exportedService = 0,
             exportedReceiver = 0, exportedProvider = 0;
-        List<String> highRisk = new ArrayList<>(); // 无权限要求的导出组件
-        // Deep Link: exported Activity + BROWSABLE + 无权限
+        List<String> highRisk = new ArrayList<>();
         List<String> deepLinkRisk = new ArrayList<>();
 
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-            if (isSys) continue; // 只分析用户应用
+            if (isSys) continue;
 
-            // 导出的 Activity（Intent Scheme URL 攻击直接目标）
             if (pkg.activities != null) {
                 for (ActivityInfo a : pkg.activities) {
                     if (a.exported) {
@@ -346,15 +290,11 @@ public class SecurityCollector implements InfoCollector {
                         boolean noPermission = (a.permission == null);
                         if (noPermission) {
                             highRisk.add("Activity: " + a.name);
-                            // 检查是否有 BROWSABLE（外部可唤起，Deep Link）
-                            // PackageManager 返回的 ActivityInfo 不含 IntentFilter，
-                            // 但无权限保护的导出 Activity 本身已是高风险入口
                             deepLinkRisk.add(pkg.packageName + "/" + a.name);
                         }
                     }
                 }
             }
-            // 导出的 Service
             if (pkg.services != null) {
                 for (ServiceInfo s : pkg.services) {
                     if (s.exported) {
@@ -363,7 +303,6 @@ public class SecurityCollector implements InfoCollector {
                     }
                 }
             }
-            // 导出的 Receiver（隐式广播攻击面）
             if (pkg.receivers != null) {
                 for (ActivityInfo r : pkg.receivers) {
                     if (r.exported) {
@@ -372,7 +311,6 @@ public class SecurityCollector implements InfoCollector {
                     }
                 }
             }
-            // 导出的 ContentProvider（修复原先未统计的问题）
             if (pkg.providers != null) {
                 for (ProviderInfo p : pkg.providers) {
                     if (p.exported) exportedProvider++;
@@ -387,14 +325,12 @@ public class SecurityCollector implements InfoCollector {
         CollectorUtils.add(items, "无权限保护的导出组件",
             highRisk.isEmpty() ? "无" : CollectorUtils.HIGH_RISK_PREFIX + highRisk.size() + " 个");
 
-        // 展示前 5 个高风险无权限导出组件
         int shown = 0;
         for (String comp : highRisk) {
             if (shown++ >= MAX_EXPORTED_COMPONENT_SAMPLE) break;
             CollectorUtils.add(items, "高风险组件", CollectorUtils.HIGH_RISK_PREFIX + comp);
         }
 
-        // Deep Link 分析
         if (!deepLinkRisk.isEmpty()) {
             CollectorUtils.add(items, "潜在 Deep Link 入口",
                 CollectorUtils.HIGH_RISK_PREFIX + deepLinkRisk.size()
@@ -406,9 +342,6 @@ public class SecurityCollector implements InfoCollector {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 4. Content Provider 路径遍历风险
-    // ─────────────────────────────────────────────────────────────
     private void scanDangerousProviders(PackageManager pm, List<InfoRow> items) {
         List<PackageInfo> packages;
         try {
@@ -428,7 +361,6 @@ public class SecurityCollector implements InfoCollector {
             for (ProviderInfo p : pkg.providers) {
                 if (!p.exported) continue;
                 total++;
-                // 高风险：无读写权限保护 + 用户应用
                 boolean noReadPerm  = (p.readPermission == null);
                 boolean noWritePerm = (p.writePermission == null);
                 boolean noAuth      = (p.authority != null);
@@ -451,15 +383,6 @@ public class SecurityCollector implements InfoCollector {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 5. APK 签名方案分析（Janus CVE-2017-13156，）
-    // ─────────────────────────────────────────────────────────────
-    /**
-     * 说明：
-     * 1) 当前实现通过 APK 文件结构（META-INF 迹象 + APK Signing Block）做风险初筛。
-     * 2) 这是“工程化近似检测”，并非完整法证级审计流程。
-     * 3) 检测结论仅供安全提示，不应作为漏洞归因的唯一依据。
-     */
     private void analyzeSignatureSchemes(PackageManager pm, List<InfoRow> items) {
         CollectorUtils.add(items, "Janus 漏洞说明",
             "CVE-2017-13156：仅用 V1 签名的 APK 在 Android 5.1-8.0 上\n" +
@@ -471,7 +394,6 @@ public class SecurityCollector implements InfoCollector {
             ? CollectorUtils.HIGH_RISK_PREFIX + "当前系统在受影响范围内（API ≤ 26）"
             : "当前系统不在典型受影响范围（API > 26）");
 
-        // 仅扫描用户应用，避免系统应用噪声
         List<PackageInfo> packages;
         try {
             packages = pm.getInstalledPackages(0);
@@ -516,9 +438,6 @@ public class SecurityCollector implements InfoCollector {
         addSignatureSamples(items, "无法判断样本", undetermined, MAX_SIGNATURE_SAMPLE, false);
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 6. 过权限应用统计
-    // ─────────────────────────────────────────────────────────────
     private void scanOverPrivilegedApps(PackageManager pm, List<InfoRow> items) {
         CollectorUtils.add(items, "背景",
             "研究表明 56% 的应用存在过度权限声明；\n" +
@@ -532,7 +451,6 @@ public class SecurityCollector implements InfoCollector {
             return;
         }
 
-        // 统计每个用户应用声明的危险权限数量，取前10
         List<Map.Entry<String, Integer>> permCounts = new ArrayList<>();
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
@@ -556,9 +474,6 @@ public class SecurityCollector implements InfoCollector {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 7. 明文 HTTP 应用（HTTPS 降级风险，）
-    // ─────────────────────────────────────────────────────────────
     private void scanCleartextApps(PackageManager pm, List<InfoRow> items) {
         CollectorUtils.add(items, "背景",
             "AFNetworking 漏洞案例：1500+ 应用因错误配置 SSL 验证，\n" +
@@ -576,7 +491,6 @@ public class SecurityCollector implements InfoCollector {
         for (PackageInfo pkg : packages) {
             boolean isSys = (pkg.applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
             if (isSys) continue;
-            // FLAG_USES_CLEARTEXT_TRAFFIC 表示 AndroidManifest 中 usesCleartextTraffic=true
             if ((pkg.applicationInfo.flags & ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC) != 0) {
                 cleartextApps.add(pkg.packageName);
             }
@@ -597,56 +511,32 @@ public class SecurityCollector implements InfoCollector {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 8. 运行中进程（挖矿木马 / 可疑服务检测，）
-    // ─────────────────────────────────────────────────────────────
-    private void checkRunningProcesses(List<InfoRow> items) {
+    private static final String TAG_PROCESS = "SecurityCollector";
+
+    private void checkRunningProcesses(Context context, List<InfoRow> items) {
         CollectorUtils.add(items, "挖矿木马特征",
             "CpuMiner 服务以 AndroidManifest 中注册的后台服务形式运行，\n" +
             "持续占用 CPU。可通过进程列表和 CPU 使用率检测。");
 
-        // 读取 /proc 目录下的进程列表（无需权限）
-        File proc = new File("/proc");
-        File[] pids = proc.listFiles(f -> f.isDirectory() && f.getName().matches("\\d+"));
-        if (pids == null) {
-            CollectorUtils.add(items, "/proc 访问", "不可访问");
-            return;
-        }
+        Set<String> seen = new LinkedHashSet<>();
+        Set<String> suspicious = new LinkedHashSet<>();
 
-        CollectorUtils.add(items, "当前可见进程数", String.valueOf(pids.length));
-        CollectorUtils.add(items, "说明",
-            "Android 高版本限制普通 App 枚举其他进程；\n"
-            + "此处仅显示当前 App 可见进程（通常只有本 App 自身及少量系统进程），\n"
-            + "不代表设备运行中的进程总数。");
+        int amProcCount  = collectFromActivityManagerProcesses(context, items, seen, suspicious);
+        int amSvcCount   = collectFromActivityManagerServices(context, items, seen, suspicious);
+        int usageCount   = collectFromUsageStats(context, items, seen, suspicious);
+        int procCount    = collectFromProc(items, seen, suspicious);
 
-        // 挖矿 / 恶意进程关键词
-        String[] suspiciousKeywords = {
-            "miner", "monero", "bitcoin", "xmrig", "coinhive",
-            "cpuminer", "minerd", "cryptonight", "kingoroot",
-            "kingroot", "supersu", "magisk", "frida", "xposed"
-        };
+        Log.i(TAG_PROCESS, "[PROC] AM.processes=" + amProcCount
+            + " AM.services=" + amSvcCount
+            + " UsageStats=" + usageCount
+            + " /proc=" + procCount
+            + " union=" + seen.size()
+            + " suspicious=" + suspicious.size());
 
-        List<String> suspicious = new ArrayList<>();
-        int shown = 0;
-
-        for (File pidDir : pids) {
-            String cmdline = readFile(pidDir.getAbsolutePath() + "/cmdline")
-                .replace('\0', ' ').trim();
-            if (cmdline.isEmpty()) continue;
-
-            for (String kw : suspiciousKeywords) {
-                if (cmdline.toLowerCase().contains(kw)) {
-                    suspicious.add(pidDir.getName() + ": " + cmdline);
-                    break;
-                }
-            }
-
-            // 展示前 15 个进程名
-            if (shown < MAX_PROCESS_SAMPLE) {
-                CollectorUtils.add(items, "PID " + pidDir.getName(), cmdline);
-                shown++;
-            }
-        }
+        CollectorUtils.add(items, "进程检测合计（去重后）",
+            String.format(Locale.US,
+                "ActivityManager 进程=%d · 服务=%d · UsageStats 应用=%d · /proc=%d · 合计去重=%d",
+                amProcCount, amSvcCount, usageCount, procCount, seen.size()));
 
         if (!suspicious.isEmpty()) {
             for (String s : suspicious) {
@@ -657,9 +547,223 @@ public class SecurityCollector implements InfoCollector {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // 工具方法
-    // ─────────────────────────────────────────────────────────────
+    private int collectFromActivityManagerProcesses(Context context, List<InfoRow> items,
+                                                    Set<String> seen, Set<String> suspicious) {
+        ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+        if (am == null) {
+            CollectorUtils.add(items, "[来源 A] ActivityManager", "不可用");
+            return 0;
+        }
+        List<ActivityManager.RunningAppProcessInfo> procs = null;
+        try {
+            procs = am.getRunningAppProcesses();
+        } catch (Exception e) {
+            CollectorUtils.add(items, "[来源 A] getRunningAppProcesses 异常", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        int count = (procs == null) ? 0 : procs.size();
+        CollectorUtils.add(items, "[来源 A] ActivityManager.getRunningAppProcesses",
+            count + " 个" + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? "（API 26+ 系统限制：仅返回当前 App 自身的进程）"
+                : "（旧系统可见全局进程）"));
+        if (procs != null) {
+            int shown = 0;
+            for (ActivityManager.RunningAppProcessInfo p : procs) {
+                String key = "AM:" + p.processName;
+                if (seen.add(key) && shown < MAX_PROCESS_SAMPLE) {
+                    CollectorUtils.add(items, "AM.proc " + p.pid,
+                        p.processName + " · importance=" + describeImportance(p.importance));
+                    shown++;
+                }
+                checkSuspicious(p.processName, "AM.proc " + p.pid, suspicious);
+            }
+        }
+        return count;
+    }
+
+    private int collectFromActivityManagerServices(Context context, List<InfoRow> items,
+                                                   Set<String> seen, Set<String> suspicious) {
+        ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+        if (am == null) return 0;
+        List<ActivityManager.RunningServiceInfo> svcs = null;
+        try {
+            svcs = am.getRunningServices(50);
+        } catch (Exception e) {
+            CollectorUtils.add(items, "[来源 B] getRunningServices 异常", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        int count = (svcs == null) ? 0 : svcs.size();
+        CollectorUtils.add(items, "[来源 B] ActivityManager.getRunningServices",
+            count + " 个" + (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? "（API 26+ 系统限制：仅返回当前 App 自身的服务）"
+                : ""));
+        if (svcs != null) {
+            int shown = 0;
+            for (ActivityManager.RunningServiceInfo s : svcs) {
+                String pkgName = s.service != null ? s.service.getPackageName() : "(unknown)";
+                String svcName = s.service != null ? s.service.getShortClassName() : "(unknown)";
+                String key = "AM.svc:" + pkgName + "/" + svcName;
+                if (seen.add(key) && shown < MAX_PROCESS_SAMPLE) {
+                    CollectorUtils.add(items, "AM.svc " + s.pid,
+                        pkgName + "/" + svcName + (s.foreground ? " (foreground)" : ""));
+                    shown++;
+                }
+                checkSuspicious(pkgName + " " + svcName, "AM.svc " + s.pid, suspicious);
+            }
+        }
+        return count;
+    }
+
+    private int collectFromUsageStats(Context context, List<InfoRow> items,
+                                      Set<String> seen, Set<String> suspicious) {
+        boolean granted = isUsageStatsGranted(context);
+        if (!granted) {
+            CollectorUtils.add(items, "[来源 C] UsageStatsManager",
+                CollectorUtils.HIGH_RISK_PREFIX
+                    + "未授予「使用情况访问权限」，全局应用活动不可见。\n"
+                    + "在 Android 8+ 上这是合法获取全局进程信息的唯一通道，\n"
+                    + "授予路径：设置 → 应用 → 特殊应用访问 → 使用情况访问 → 授予本应用");
+            return 0;
+        }
+        UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+        if (usm == null) {
+            CollectorUtils.add(items, "[来源 C] UsageStatsManager", "服务不可用");
+            return 0;
+        }
+        long now = System.currentTimeMillis();
+        long start = now - 60L * 60L * 1000L;
+        List<UsageStats> stats = null;
+        try {
+            stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_BEST, start, now);
+        } catch (Exception e) {
+            CollectorUtils.add(items, "[来源 C] queryUsageStats 异常", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+        if (stats == null || stats.isEmpty()) {
+            CollectorUtils.add(items, "[来源 C] UsageStatsManager", "已授权，但近 1 小时无活动数据");
+            return 0;
+        }
+        List<UsageStats> active = new ArrayList<>();
+        for (UsageStats us : stats) {
+            if (us.getTotalTimeInForeground() > 0 || us.getLastTimeUsed() >= start) {
+                active.add(us);
+            }
+        }
+        active.sort(new Comparator<UsageStats>() {
+            @Override public int compare(UsageStats a, UsageStats b) {
+                return Long.compare(b.getLastTimeUsed(), a.getLastTimeUsed());
+            }
+        });
+        CollectorUtils.add(items, "[来源 C] UsageStatsManager",
+            "已授权 · 近 1 小时活跃应用 " + active.size() + " 个（按最近使用时间倒序）");
+        int shown = 0;
+        for (UsageStats us : active) {
+            String pkg = us.getPackageName();
+            String key = "Usage:" + pkg;
+            if (seen.add(key) && shown < MAX_PROCESS_SAMPLE) {
+                long fgSec = us.getTotalTimeInForeground() / 1000L;
+                CollectorUtils.add(items, "Usage " + pkg,
+                    "近 1 小时前台 " + fgSec + "s · 最近使用 "
+                        + ((now - us.getLastTimeUsed()) / 1000L) + "s 前");
+                shown++;
+            }
+            checkSuspicious(pkg, "Usage " + pkg, suspicious);
+        }
+        return active.size();
+    }
+
+    private int collectFromProc(List<InfoRow> items, Set<String> seen, Set<String> suspicious) {
+        File proc = new File("/proc");
+        File[] pids = proc.listFiles(f -> f.isDirectory() && f.getName().matches("\\d+"));
+        if (pids == null) {
+            CollectorUtils.add(items, "[来源 D] /proc 访问", "不可访问");
+            return 0;
+        }
+        int myUid = Process.myUid();
+        int sameUidCount = 0;
+        int otherUidCount = 0;
+        int shown = 0;
+        for (File pidDir : pids) {
+            String cmdline = readFile(pidDir.getAbsolutePath() + "/cmdline").replace('\0', ' ').trim();
+            if (cmdline.isEmpty()) continue;
+            String statusFirstUid = readFirstMatchingLine(pidDir.getAbsolutePath() + "/status", "Uid:");
+            int procUid = parseFirstIntFromStatus(statusFirstUid);
+            if (procUid == myUid) sameUidCount++; else otherUidCount++;
+
+            String key = "/proc:" + pidDir.getName();
+            if (seen.add(key) && shown < MAX_PROCESS_SAMPLE) {
+                CollectorUtils.add(items, "PID " + pidDir.getName(),
+                    cmdline + (procUid == myUid ? " (本应用进程)" : " (uid=" + procUid + ")"));
+                shown++;
+            }
+            checkSuspicious(cmdline, "PID " + pidDir.getName(), suspicious);
+        }
+        CollectorUtils.add(items, "[来源 D] /proc 枚举",
+            "可见 " + pids.length + " 个 PID（本应用 UID=" + sameUidCount
+                + " · 其它 UID=" + otherUidCount + "）");
+        if (otherUidCount == 0 && pids.length > 0) {
+            CollectorUtils.add(items, "/proc 受限说明",
+                "Android 7+ 启用 hidepid=2，第三方 App 几乎只能看到自身进程；\n"
+                    + "这是系统级限制，不代表设备没有其他进程在运行。");
+        }
+        return pids.length;
+    }
+
+    private void checkSuspicious(String text, String labelPrefix, Set<String> suspicious) {
+        if (text == null || text.isEmpty()) return;
+        String[] suspiciousKeywords = {
+            "miner", "monero", "bitcoin", "xmrig", "coinhive",
+            "cpuminer", "minerd", "cryptonight", "kingoroot",
+            "kingroot", "supersu", "magisk", "frida", "xposed"
+        };
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (String kw : suspiciousKeywords) {
+            if (lower.contains(kw)) {
+                suspicious.add(labelPrefix + ": " + text);
+                return;
+            }
+        }
+    }
+
+    private int parseFirstIntFromStatus(String line) {
+        if (line == null) return -1;
+        String trimmed = line.trim();
+        String[] tokens = trimmed.split("\\s+");
+        for (int i = 1; i < tokens.length; i++) {
+            try { return Integer.parseInt(tokens[i]); } catch (NumberFormatException ignored) {}
+        }
+        return -1;
+    }
+
+    private boolean isUsageStatsGranted(Context context) {
+        try {
+            AppOpsManager appOps = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
+            if (appOps == null) return false;
+            int mode;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                mode = appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(), context.getPackageName());
+            } else {
+                mode = appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(), context.getPackageName());
+            }
+            return mode == AppOpsManager.MODE_ALLOWED;
+        } catch (Exception e) {
+            Log.w(TAG_PROCESS, "isUsageStatsGranted check failed", e);
+            return false;
+        }
+    }
+
+    private String describeImportance(int importance) {
+        switch (importance) {
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND:        return "FOREGROUND";
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE:return "FOREGROUND_SERVICE";
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE:           return "VISIBLE";
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE:       return "PERCEPTIBLE";
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE:           return "SERVICE";
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED:            return "CACHED";
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_GONE:              return "GONE";
+            default:                                                                 return "OTHER(" + importance + ")";
+        }
+    }
+
 
     private SignatureDetectionResult detectSignatureScheme(PackageInfo pkg) {
         String packageName = pkg.packageName != null ? pkg.packageName : "(unknown)";
@@ -865,7 +969,6 @@ public class SecurityCollector implements InfoCollector {
         int shown = 0;
         for (SignatureDetectionResult result : bucket) {
             if (shown++ >= maxSamples) break;
-            // 展示签名方案字段
             StringBuilder value = new StringBuilder();
             value.append("V1:").append(result.hasV1Signature ? "✓" : "✗");
             value.append("  V2:").append(result.hasV2Block ? "✓" : "✗");
@@ -873,7 +976,6 @@ public class SecurityCollector implements InfoCollector {
             value.append(" | 置信度:").append(result.detectionConfidence);
             value.append(" | ").append(result.detectionNote);
 
-            // Janus 风险仅在 V1-only 且 API ≤ 26 时标为高危
             boolean isJanusHighRisk = possiblyV1Only
                 && !result.hasV2Block && !result.hasV3Block
                 && Build.VERSION.SDK_INT <= 26;

@@ -26,21 +26,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 
-/**
- * 通用信息列表 Fragment 基类
- * - 数据在后台线程收集，避免主线程卡顿
- * - 提供"刷新"按钮，让用户在切换到该 tab 后手动触发（对剪贴板等敏感数据尤其重要）
- */
 public abstract class BaseInfoFragment extends Fragment {
 
     private InfoAdapter adapter;
     private ProgressBar progressBar;
     private Button btnRefresh;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    /**
-     * 线程池与任务句柄绑定到 View 生命周期，避免 onDestroyView 后复用失效 executor。
-     */
-    @Nullable
+        @Nullable
     private ExecutorService executor;
     @Nullable
     private Future<?> runningTask;
@@ -67,13 +59,11 @@ public abstract class BaseInfoFragment extends Fragment {
 
         btnRefresh.setOnClickListener(v -> loadData());
 
-        // 首次进入 tab 时自动加载
         if (!loaded) loadData();
 
         return view;
     }
 
-    /** 在后台线程收集数据，完成后在主线程更新 UI */
     protected void loadData() {
         if (!isViewUsable()) return;
 
@@ -125,7 +115,6 @@ public abstract class BaseInfoFragment extends Fragment {
 
     protected abstract List<InfoRow> collectInfo();
 
-    /** 子类可重写此方法来配置 Adapter（如设置 click listener）*/
     protected void onAdapterReady(@androidx.annotation.NonNull InfoAdapter adapter) {}
 
     @Override

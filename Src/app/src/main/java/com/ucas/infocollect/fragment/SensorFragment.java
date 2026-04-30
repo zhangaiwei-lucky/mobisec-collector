@@ -9,6 +9,8 @@ import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,39 +29,44 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * 传感器侧信道分析界面
- *
- * 实时模式：onResume 注册传感器，onPause 取消，数据持续更新
- * 分析模式：点击按钮采集 5 秒快照，生成硬件指纹和活动识别结果
- */
 public class SensorFragment extends Fragment implements SensorEventListener {
+
+    private static final String TAG = "SensorFragment";
 
     private static final int SAMPLE_MS   = 5000;
     private static final int MAX_SAMPLES = 1000;
-    private static final int UI_SKIP     = 10; // 每 10 个事件刷一次 UI（约 5Hz）
+    private static final int UI_SKIP     = 10;
 
     private static final String PREFS_SENSOR  = "sensor_fingerprints";
     private static final String KEY_HISTORY   = "fp_history";
     private static final int    MAX_HISTORY   = 5;
+    private static final String FP_VERSION_TAG = "FPv2";
+    private static final double FP_QUANTIZE_STEP = 0.01;
+    private static final double FP_MATCH_DIST   = 0.05;
+    private static final double FP_SIMILAR_DIST = 0.5;
+    private static final long   PRESSURE_TIMEOUT_MS = 3000L;
 
     private SensorManager sensorManager;
     private Sensor accelSensor, gyroSensor, pressureSensor;
 
-    // 实时值
     private float[] liveAccel    = new float[3];
     private float[] liveGyro     = new float[3];
     private float   livePressure = 0f;
     private int eventCount = 0;
 
-    // 采集快照数据
     private final List<float[]>  accelSnap    = new ArrayList<>();
     private final List<float[]>  gyroSnap     = new ArrayList<>();
     private final List<Float>    pressureSnap = new ArrayList<>();
     private boolean isSnapping = false;
-    private boolean pressureDataReceived = false; // 是否已收到气压计回调
+    private boolean pressureDataReceived = false;
 
-    // UI
+    private boolean pressureRegistered = false;
+    private long    pressureRegisterAt = 0L;
+    private long    pressureFirstCbAt  = 0L;
+    private int     pressureAccuracy   = -1;
+    private int     pressureCbCount    = 0;
+    private Runnable pressureTimeoutRunnable;
+
     private TextView tvSensorList, tvAccel, tvGyro, tvActivity, tvFingerprint, tvPressure;
     private Button   btnSnap;
     private ProgressBar progressBar;
@@ -88,8 +95,10 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             accelSensor    = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
             gyroSensor     = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
             pressureSensor = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE);
+            logBarometerInventory();
             displaySensorInventory();
         } catch (Exception e) {
+            Log.e(TAG, "Sensor init failed", e);
             tvSensorList.setText("传感器初始化失败: " + e.getMessage());
         }
 
@@ -97,30 +106,67 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         return view;
     }
 
-    // ── 生命周期：可见时注册传感器，不可见时取消 ──────────────────
 
     @Override
     public void onResume() {
         super.onResume();
-        if (sensorManager != null) {
-            if (accelSensor != null)
-                sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME);
-            if (gyroSensor != null)
-                sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME);
-            if (pressureSensor != null)
-                sensorManager.registerListener(this, pressureSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        if (sensorManager == null) return;
+
+        if (accelSensor != null) {
+            boolean ok = sensorManager.registerListener(this, accelSensor, SensorManager.SENSOR_DELAY_GAME);
+            Log.d(TAG, "registerListener[ACCEL] ok=" + ok);
         }
+        if (gyroSensor != null) {
+            boolean ok = sensorManager.registerListener(this, gyroSensor, SensorManager.SENSOR_DELAY_GAME);
+            Log.d(TAG, "registerListener[GYRO] ok=" + ok);
+        }
+        registerPressureListener();
+    }
+
+    private void registerPressureListener() {
+        if (sensorManager == null) return;
+        if (pressureSensor == null) {
+            Log.w(TAG, "[BARO] 设备无 TYPE_PRESSURE 传感器，跳过注册");
+            updateLiveDisplay();
+            return;
+        }
+        boolean ok = sensorManager.registerListener(this, pressureSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        pressureRegistered = ok;
+        pressureRegisterAt = SystemClock.elapsedRealtime();
+        pressureFirstCbAt  = 0L;
+        pressureCbCount    = 0;
+        Log.i(TAG, "[BARO] registerListener ok=" + ok
+            + " sensor=" + pressureSensor.getName()
+            + " vendor=" + pressureSensor.getVendor()
+            + " power=" + pressureSensor.getPower() + "mA"
+            + " minDelayUs=" + pressureSensor.getMinDelay()
+            + " maxRange=" + pressureSensor.getMaximumRange() + "hPa"
+            + " resolution=" + pressureSensor.getResolution());
+
+        if (pressureTimeoutRunnable != null) handler.removeCallbacks(pressureTimeoutRunnable);
+        pressureTimeoutRunnable = () -> {
+            if (!pressureDataReceived) {
+                Log.w(TAG, "[BARO] 注册 " + PRESSURE_TIMEOUT_MS
+                    + "ms 后仍无回调（registered=" + pressureRegistered + "）");
+            }
+            updateLiveDisplay();
+        };
+        handler.postDelayed(pressureTimeoutRunnable, PRESSURE_TIMEOUT_MS);
+
+        updateLiveDisplay();
     }
 
     @Override
     public void onPause() {
         super.onPause();
-        // 离开 tab 时停止实时采集（不影响已采集的快照数据）
         if (sensorManager != null) sensorManager.unregisterListener(this);
+        if (pressureTimeoutRunnable != null) handler.removeCallbacks(pressureTimeoutRunnable);
+        Log.d(TAG, "[BARO] unregister @ onPause; cbCount=" + pressureCbCount
+            + " firstCbDelay=" + (pressureFirstCbAt > 0 ? (pressureFirstCbAt - pressureRegisterAt) + "ms" : "N/A"));
+        pressureRegistered = false;
         if (isSnapping) cancelSnapshot();
     }
 
-    // ── 传感器回调 ─────────────────────────────────────────────────
 
     @Override
     public void onSensorChanged(SensorEvent event) {
@@ -135,17 +181,41 @@ public class SensorFragment extends Fragment implements SensorEventListener {
                 gyroSnap.add(event.values.clone());
         } else if (type == Sensor.TYPE_PRESSURE) {
             livePressure = event.values[0];
-            pressureDataReceived = true;
+            pressureCbCount++;
+            if (!pressureDataReceived) {
+                pressureDataReceived = true;
+                pressureFirstCbAt = SystemClock.elapsedRealtime();
+                long delay = pressureFirstCbAt - pressureRegisterAt;
+                Log.i(TAG, "[BARO] 首次回调 delay=" + delay + "ms"
+                    + " pressure=" + livePressure + "hPa"
+                    + " accuracy=" + pressureAccuracy);
+            }
             if (isSnapping && pressureSnap.size() < MAX_SAMPLES)
                 pressureSnap.add(event.values[0]);
         }
 
-        // 限速 UI 更新
         if (++eventCount % UI_SKIP == 0) updateLiveDisplay();
     }
 
     @Override
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        if (sensor != null && sensor.getType() == Sensor.TYPE_PRESSURE) {
+            pressureAccuracy = accuracy;
+            Log.d(TAG, "[BARO] onAccuracyChanged accuracy=" + accuracy
+                + " (" + describeAccuracy(accuracy) + ")");
+        }
+    }
+
+    private static String describeAccuracy(int accuracy) {
+        switch (accuracy) {
+            case SensorManager.SENSOR_STATUS_NO_CONTACT:        return "NO_CONTACT";
+            case SensorManager.SENSOR_STATUS_UNRELIABLE:        return "UNRELIABLE";
+            case SensorManager.SENSOR_STATUS_ACCURACY_LOW:      return "LOW";
+            case SensorManager.SENSOR_STATUS_ACCURACY_MEDIUM:   return "MEDIUM";
+            case SensorManager.SENSOR_STATUS_ACCURACY_HIGH:     return "HIGH";
+            default:                                            return "UNKNOWN(" + accuracy + ")";
+        }
+    }
 
     private void updateLiveDisplay() {
         if (tvAccel == null) return;
@@ -156,21 +226,35 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             "角速度 (rad/s) X=%+7.4f  Y=%+7.4f  Z=%+7.4f",
             liveGyro[0], liveGyro[1], liveGyro[2]));
         if (tvPressure != null) {
-            if (pressureSensor == null) {
-                tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
-            } else if (!pressureDataReceived) {
-                tvPressure.setText("气压计：暂未收到气压数据（传感器存在，等待回调）");
-            } else {
-                float altitude = SensorManager.getAltitude(
-                    SensorManager.PRESSURE_STANDARD_ATMOSPHERE, livePressure);
-                tvPressure.setText(String.format(Locale.getDefault(),
-                    "气压: %.2f hPa  |  估算海拔: %.1f m  |  ≈楼层: %d",
-                    livePressure, altitude, Math.round(altitude / 3.0)));
-            }
+            tvPressure.setText(buildPressureStatus());
         }
     }
 
-    // ── 快照采集与分析 ─────────────────────────────────────────────
+    private String buildPressureStatus() {
+        if (pressureSensor == null) {
+            return "气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）";
+        }
+        if (!pressureRegistered) {
+            return "气压计：注册失败（registerListener 返回 false，可能被系统/省电策略拦截）";
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (!pressureDataReceived) {
+            long waited = now - pressureRegisterAt;
+            String prefix = waited > PRESSURE_TIMEOUT_MS
+                ? "气压计：⚠ 超时未响应（注册成功但 " + waited + "ms 内无回调）"
+                : "气压计：等待首个回调中（已等待 " + waited + "ms）";
+            return prefix + "\n  传感器: " + pressureSensor.getName()
+                + " · vendor=" + pressureSensor.getVendor();
+        }
+        float altitude = SensorManager.getAltitude(
+            SensorManager.PRESSURE_STANDARD_ATMOSPHERE, livePressure);
+        long firstDelay = pressureFirstCbAt - pressureRegisterAt;
+        return String.format(Locale.getDefault(),
+            "气压: %.2f hPa  |  估算海拔: %.1f m  |  ≈楼层: %d\n  状态: 已响应（首回调 %dms · 累计 %d 次 · accuracy=%s）",
+            livePressure, altitude, Math.round(altitude / 3.0),
+            firstDelay, pressureCbCount, describeAccuracy(pressureAccuracy));
+    }
+
 
     private void startSnapshot() {
         isSnapping = true;
@@ -213,7 +297,6 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         btnSnap.setText("重新采集分析");
     }
 
-    // ── 活动识别 ───────────────────────────────────────────────────
 
     private void analyzeActivity() {
         double[] var = variance(accelSnap);
@@ -243,7 +326,6 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             activity, var[0], var[1], var[2], total, accelSnap.size()));
     }
 
-    // ── 硬件指纹 ───────────────────────────────────────────────────
 
     private void generateFingerprint() {
         double[] aMean = mean(accelSnap);
@@ -252,11 +334,14 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         double[] gStd  = gyroSnap.isEmpty() ? new double[3] : std(gyroSnap, gMean);
 
         long hash = 0;
-        hash ^= (long)(aMean[0] * 1e6) & 0xFFFFL;
-        hash ^= ((long)(aMean[1] * 1e6) & 0xFFFFL) << 16;
-        hash ^= ((long)(aMean[2] * 1e6) & 0xFFFFL) << 32;
-        hash ^= ((long)(gMean[0] * 1e8) & 0xFFFFL) << 48;
+        hash ^= (quantize(aMean[0]) & 0xFFFFL);
+        hash ^= (quantize(aMean[1]) & 0xFFFFL) << 16;
+        hash ^= (quantize(aMean[2]) & 0xFFFFL) << 32;
+        hash ^= (quantize(gMean[0]) & 0xFFFFL) << 48;
         String hashStr = String.format("%016X", hash);
+        Log.d(TAG, "[FP] generated hash=" + hashStr
+            + " aMean=(" + aMean[0] + "," + aMean[1] + "," + aMean[2] + ")"
+            + " gMean=(" + gMean[0] + "," + gMean[1] + "," + gMean[2] + ")");
 
         StringBuilder sb = new StringBuilder();
         sb.append("═══ 实验性传感器指纹 ═══\n");
@@ -275,7 +360,6 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             sb.append(String.format("  Z: %+.6f  σ=%.6f\n", gMean[2], gStd[2]));
         }
 
-        // 气压计数据（带存在性检查）
         if (!pressureSnap.isEmpty()) {
             double pMean = 0;
             for (float p : pressureSnap) pMean += p;
@@ -293,50 +377,72 @@ public class SensorFragment extends Fragment implements SensorEventListener {
             sb.append("\n气压计 (TYPE_PRESSURE): 本设备无气压计\n");
         }
 
-        // 历史指纹对比（基于均值向量 L2 距离，比纯 hash 匹配更有意义）
-        // 存储格式: "HASH|ax|ay|az|gx|gy|gz" 每条记录，用逗号分隔
         sb.append("\n── 历史指纹对比（向量距离） ──\n");
         SharedPreferences prefs = requireContext().getSharedPreferences(PREFS_SENSOR, Context.MODE_PRIVATE);
         String history = prefs.getString(KEY_HISTORY, "");
-        String[] histEntries = history.isEmpty() ? new String[0] : history.split(",");
+        String[] rawEntries = history.isEmpty() ? new String[0] : history.split(",");
+
+        List<String>   validEntries = new ArrayList<>();
+        List<double[]> validVectors = new ArrayList<>();
+        List<String>   validHashes  = new ArrayList<>();
+        int legacyCount = 0;
+        for (String entry : rawEntries) {
+            ParsedFingerprint pf = parseHistoryEntry(entry);
+            if (pf == null) {
+                legacyCount++;
+                continue;
+            }
+            validEntries.add(entry);
+            validVectors.add(pf.vector);
+            validHashes.add(pf.hash);
+        }
+        Log.i(TAG, "[FP] history loaded raw=" + rawEntries.length
+            + " valid=" + validEntries.size() + " legacyDropped=" + legacyCount);
 
         double[] curVec = { aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2] };
         double minDist = Double.MAX_VALUE;
-        int validCount = 0;
-        for (String entry : histEntries) {
-            double[] vec = parseHistoryEntry(entry);
-            if (vec != null) {
-                validCount++;
-                double dist = vectorDistance(curVec, vec);
-                if (dist < minDist) minDist = dist;
+        int matchedIdx = -1;
+        for (int i = 0; i < validVectors.size(); i++) {
+            double dist = vectorDistance(curVec, validVectors.get(i));
+            if (dist < minDist) { minDist = dist; matchedIdx = i; }
+        }
+
+        if (validEntries.isEmpty()) {
+            sb.append("  首次采集，暂无历史数据");
+            if (legacyCount > 0) sb.append(String.format("（已丢弃 %d 条旧格式遗留）", legacyCount));
+            sb.append("\n");
+        } else {
+            sb.append(String.format("  历史记录数: %d", validEntries.size()));
+            if (legacyCount > 0) sb.append(String.format("（另丢弃 %d 条旧格式遗留）", legacyCount));
+            sb.append("\n");
+            sb.append(String.format("  本次哈希: %s\n", hashStr));
+            String matchedHash = matchedIdx >= 0 ? validHashes.get(matchedIdx) : "?";
+            sb.append(String.format("  最近邻哈希: %s%s\n", matchedHash,
+                hashStr.equals(matchedHash) ? "（与本次完全一致）" : ""));
+            sb.append(String.format("  最近邻向量距离: %.6f\n", minDist));
+            String verdict;
+            if (minDist < FP_MATCH_DIST) {
+                verdict = "✓ 匹配（极可能为同一设备同姿态）";
+            } else if (minDist < FP_SIMILAR_DIST) {
+                verdict = "≈ 相似（可能同一设备但姿态/温度有变化）";
+            } else {
+                verdict = "✗ 不同（首次见到这个特征向量）";
             }
-        }
-
-        if (validCount == 0) {
-            sb.append("  首次采集，暂无历史数据\n");
-        } else {
-            sb.append(String.format("  历史记录数: %d\n", validCount));
-            sb.append(String.format("  与最近历史的向量距离: %.6f\n", minDist));
-            // 距离越小相似度越高；distance=0 → 100%，distance很大 → 接近0%
             double similarity = 100.0 / (1.0 + minDist * 50.0);
-            sb.append(String.format("  估算相似度: %.1f%%\n", similarity));
-            sb.append("  注：相似度受温度、姿态、运动影响；请静置多次采集以评估稳定性\n");
+            sb.append(String.format("  判定: %s\n", verdict));
+            sb.append(String.format("  估算相似度: %.1f%%（仅供参考）\n", similarity));
+            sb.append("  注：受温度、姿态、运动影响；请静置多次采集以评估稳定性\n");
+            Log.i(TAG, "[FP] match minDist=" + minDist + " verdict=" + verdict);
         }
 
-        // 保存到历史（新格式含向量数据）
-        String newEntry = String.format(Locale.US, "%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
-            hashStr, aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2]);
-        String[] newHistory;
-        if (histEntries.length >= MAX_HISTORY) {
-            newHistory = new String[MAX_HISTORY];
-            System.arraycopy(histEntries, histEntries.length - MAX_HISTORY + 1, newHistory, 0, MAX_HISTORY - 1);
-            newHistory[MAX_HISTORY - 1] = newEntry;
-        } else {
-            newHistory = new String[histEntries.length + 1];
-            System.arraycopy(histEntries, 0, newHistory, 0, histEntries.length);
-            newHistory[histEntries.length] = newEntry;
-        }
-        prefs.edit().putString(KEY_HISTORY, String.join(",", newHistory)).apply();
+        String newEntry = String.format(Locale.US, "%s|%s|%.8f|%.8f|%.8f|%.8f|%.8f|%.8f",
+            FP_VERSION_TAG, hashStr,
+            aMean[0], aMean[1], aMean[2], gMean[0], gMean[1], gMean[2]);
+        validEntries.add(newEntry);
+        int from = Math.max(0, validEntries.size() - MAX_HISTORY);
+        List<String> persisted = validEntries.subList(from, validEntries.size());
+        prefs.edit().putString(KEY_HISTORY, String.join(",", persisted)).apply();
+        Log.d(TAG, "[FP] history persisted size=" + persisted.size());
 
         sb.append("\n⚠ 无需任何权限 · 实验性传感器侧信道指纹原型\n");
         sb.append("（稳定性需在静止状态、多轮采集、多设备间交叉验证）");
@@ -345,26 +451,39 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         tvFingerprint.setText(sb.toString());
     }
 
-    /** 解析历史条目：格式 "HASH|ax|ay|az|gx|gy|gz"，返回向量或 null */
-    private double[] parseHistoryEntry(String entry) {
+    private static final class ParsedFingerprint {
+        final String   hash;
+        final double[] vector;
+        ParsedFingerprint(String hash, double[] vector) {
+            this.hash   = hash;
+            this.vector = vector;
+        }
+    }
+
+    private ParsedFingerprint parseHistoryEntry(String entry) {
         if (entry == null) return null;
         String[] parts = entry.split("\\|");
-        if (parts.length != 7) return null;
+        if (parts.length != 8) return null;
+        if (!FP_VERSION_TAG.equals(parts[0])) return null;
         try {
-            return new double[]{
-                Double.parseDouble(parts[1]),
+            double[] vec = new double[]{
                 Double.parseDouble(parts[2]),
                 Double.parseDouble(parts[3]),
                 Double.parseDouble(parts[4]),
                 Double.parseDouble(parts[5]),
-                Double.parseDouble(parts[6])
+                Double.parseDouble(parts[6]),
+                Double.parseDouble(parts[7])
             };
+            return new ParsedFingerprint(parts[1], vec);
         } catch (NumberFormatException e) {
             return null;
         }
     }
 
-    /** L2 向量距离 */
+    private long quantize(double v) {
+        return (long) Math.round(v / FP_QUANTIZE_STEP);
+    }
+
     private double vectorDistance(double[] a, double[] b) {
         double sum = 0;
         int len = Math.min(a.length, b.length);
@@ -375,7 +494,28 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         return Math.sqrt(sum);
     }
 
-    // ── 传感器清单 ─────────────────────────────────────────────────
+
+    private void logBarometerInventory() {
+        if (sensorManager == null) {
+            Log.e(TAG, "[BARO] SensorManager == null");
+            return;
+        }
+        List<Sensor> all = sensorManager.getSensorList(Sensor.TYPE_PRESSURE);
+        Log.i(TAG, "[BARO] getSensorList(TYPE_PRESSURE) size=" + (all == null ? -1 : all.size())
+            + " defaultSensor=" + (pressureSensor == null ? "null" : pressureSensor.getName()));
+        if (all != null) {
+            int idx = 0;
+            for (Sensor s : all) {
+                Log.i(TAG, "[BARO]   #" + (idx++) + " name=" + s.getName()
+                    + " vendor=" + s.getVendor()
+                    + " type=" + s.getType()
+                    + " power=" + s.getPower() + "mA"
+                    + " minDelayUs=" + s.getMinDelay()
+                    + " range=" + s.getMaximumRange() + "hPa"
+                    + " resolution=" + s.getResolution());
+            }
+        }
+    }
 
     private void displaySensorInventory() {
         List<Sensor> all = sensorManager.getSensorList(Sensor.TYPE_ALL);
@@ -391,22 +531,15 @@ public class SensorFragment extends Fragment implements SensorEventListener {
         sb.append("\n共 ").append(all.size()).append(" 个传感器");
         tvSensorList.setText(sb.toString());
 
-        // 初始化气压计状态显示
         if (tvPressure != null) {
-            if (pressureSensor == null) {
-                tvPressure.setText("气压计：本设备无气压计（TYPE_PRESSURE 传感器不存在）");
-            } else {
-                tvPressure.setText("气压计：正在等待数据...");
-            }
+            tvPressure.setText(buildPressureStatus());
         }
 
-        // 初始化指纹区域提示
         if (tvFingerprint != null) {
             tvFingerprint.setText("点击下方按钮采集实验性传感器指纹\n建议先将手机静置 5 秒后再采集");
         }
     }
 
-    // ── 统计工具 ───────────────────────────────────────────────────
 
     private double[] mean(List<float[]> s) {
         double[] m = new double[3];
@@ -457,6 +590,7 @@ public class SensorFragment extends Fragment implements SensorEventListener {
     public void onDestroyView() {
         super.onDestroyView();
         if (stopSnapRunnable != null) handler.removeCallbacks(stopSnapRunnable);
+        if (pressureTimeoutRunnable != null) handler.removeCallbacks(pressureTimeoutRunnable);
         tvAccel = tvGyro = tvActivity = tvFingerprint = tvSensorList = tvPressure = null;
         progressBar = null; btnSnap = null;
     }
